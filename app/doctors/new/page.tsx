@@ -17,7 +17,7 @@ import {
   Stethoscope,
   Clock,
   ChevronRight,
-  CheckCircle2
+  CheckCircle2,
 } from 'lucide-react';
 import { api } from '@/utils/api';
 import '../../dashboard/Dashboard.css';
@@ -137,7 +137,9 @@ export default function NewDoctorPage() {
       ...prev,
       [name]:
         name === 'experience_years' || name === 'consultation_fee' || name === 'plan_id'
-          ? Number(value)
+          ? value === '' && name === 'plan_id'
+            ? 0
+            : Number(value)
           : value,
     }));
   };
