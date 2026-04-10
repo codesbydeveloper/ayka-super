@@ -104,6 +104,14 @@ function billingReportPath(): string {
     : "/api/v1/super-admin/billing/report";
 }
 
+function billingTransactionOverridePath(): string {
+  if (typeof window === "undefined")
+    return "/api/v1/super-admin/billing/transactions/override";
+  return localStorage.getItem("user_type") === "admin_staff"
+    ? "/api/v1/admin-staff/billing/transactions/override"
+    : "/api/v1/super-admin/billing/transactions/override";
+}
+
 function defaultReportDateRange(): { from: string; to: string } {
   const now = new Date();
   const y = now.getFullYear();
@@ -294,18 +302,18 @@ export default function BillingPage() {
   const [doctorsLoading, setDoctorsLoading] = useState(false);
   const [patientsForTxn, setPatientsForTxn] = useState<BillingPatientOption[]>([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
-  const [txnData, setTxnData] = useState({
+  const initialTxnOverride = () => ({
+    clinic_id: 0,
     amount: 0,
-    appointment_id: 0,
-    description: '',
-    discount: 0,
-    doctor_id: 0,
-    notes: '',
-    patient_id: 0,
-    payment_method: 'cash',
+    category: "Consultation",
+    payment_method: "cash_override",
     tax: 0,
-    transaction_type: 'consultation'
+    doctor_id: 0,
+    patient_id: 0,
+    description: "",
   });
+
+  const [txnData, setTxnData] = useState(initialTxnOverride);
 
   const fetchBillingSummary = useCallback(async () => {
     try {
@@ -444,7 +452,9 @@ export default function BillingPage() {
         ? "/api/v1/admin-staff/patients"
         : "/api/v1/super-admin/patients";
       const params = new URLSearchParams({ skip: "0", limit: "100" });
-      if (selectedClinic) params.set("clinic_id", selectedClinic);
+      const clinicForModal =
+        txnData.clinic_id > 0 ? String(txnData.clinic_id) : selectedClinic;
+      if (clinicForModal) params.set("clinic_id", clinicForModal);
       const q = params.toString();
 
       const [docResult, patResult] = await Promise.allSettled([
@@ -484,7 +494,7 @@ export default function BillingPage() {
     return () => {
       cancelled = true;
     };
-  }, [isModalOpen, selectedClinic]);
+   }, [isModalOpen, selectedClinic, txnData.clinic_id]);
 
   useEffect(() => {
     if (!isModalOpen || doctorsLoading) return;
@@ -504,19 +514,60 @@ export default function BillingPage() {
 
   const handleCreateTxn = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!txnData.clinic_id || !Number.isFinite(txnData.clinic_id)) {
+      alert("Select a clinic for this record.");
+      return;
+    }
+    if (!(txnData.amount > 0)) {
+      alert("Enter a transaction amount greater than zero.");
+      return;
+    }
     setCreating(true);
     try {
-      const result = await api.post('/api/v1/transactions/clinic/transactions', txnData);
-      if (result && result.success) {
-        alert('SUCCESS: Platform transaction reconciled and recorded.');
-        setIsModalOpen(false);
-        void fetchBillingSummary();
-        fetchPayments(); // Refresh the stream
-      } else {
-        alert(result.message || 'TRANSACTION REJECTED: Server validation failed.');
+      const body: Record<string, unknown> = {
+        clinic_id: txnData.clinic_id,
+        amount: txnData.amount,
+        category: txnData.category,
+        payment_method: txnData.payment_method || "cash_override",
+        tax_deduction: txnData.tax >= 0 ? txnData.tax : 0,
+      };
+      const desc = txnData.description.trim();
+      if (desc) body.description = desc;
+      if (txnData.doctor_id > 0) body.doctor_id = txnData.doctor_id;
+      if (txnData.patient_id > 0) body.patient_id = txnData.patient_id;
+
+      const result = (await api.post(
+        billingTransactionOverridePath(),
+        body,
+      )) as {
+        success?: boolean;
+        message?: string;
+      };
+
+      if (result && result.success === false) {
+        alert(
+          typeof result.message === "string"
+            ? result.message
+            : "Record was not accepted.",
+        );
+        return;
       }
-    } catch (err: any) {
-      alert('FORENSIC ERROR: Record submission failed - ' + err.message);
+
+      alert(
+        typeof result.message === "string" && result.message
+          ? result.message
+          : "Administrative record created successfully.",
+      );
+      setIsModalOpen(false);
+      setTxnData(initialTxnOverride());
+      void fetchBillingSummary();
+      fetchPayments();
+    } catch (err: unknown) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Record submission failed. Please try again.",
+      );
     } finally {
       setCreating(false);
     }
@@ -544,7 +595,20 @@ export default function BillingPage() {
       </div>
 
       <div className="billing-toolbar">
-         <button type="button" className="btn btn-primary billing-override-btn" onClick={() => setIsModalOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+         <button
+            type="button"
+            className="btn btn-primary billing-override-btn"
+            onClick={() => {
+              setTxnData({
+                ...initialTxnOverride(),
+                clinic_id: selectedClinic
+                  ? Number.parseInt(selectedClinic, 10) || 0
+                  : 0,
+              });
+              setIsModalOpen(true);
+            }}
+            style={{ display: "flex", alignItems: "center", gap: "8px" }}
+          >
             <Plus size={18} />
             <span>Administrative Transaction Override</span>
          </button>
@@ -902,13 +966,39 @@ export default function BillingPage() {
             </div>
 
             <form onSubmit={handleCreateTxn} className="modal-body" style={{ padding: '32px' }}>
+              <div className="form-group" style={{ marginBottom: 16 }}>
+                <label className="form-label">Clinic</label>
+                <select
+                  className="form-input"
+                  value={txnData.clinic_id > 0 ? String(txnData.clinic_id) : ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTxnData({
+                      ...txnData,
+                      clinic_id: v ? parseInt(v, 10) : 0,
+                      doctor_id: 0,
+                      patient_id: 0,
+                    });
+                  }}
+                  required
+                >
+                  <option value="">Select clinic</option>
+                  {clinics.map((clinic: { id?: number; name?: string }) => (
+                    <option key={clinic.id} value={clinic.id}>
+                      {clinic.name ?? `Clinic #${clinic.id}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                 <div className="form-group">
                    <label className="form-label">Transaction Amount (₹)</label>
                    <input 
                     type="number" 
                     className="form-input" 
-                    value={txnData.amount}
+                    min={0}
+                    step="0.01"
+                    value={txnData.amount === 0 ? "" : txnData.amount}
                     onChange={(e) => setTxnData({...txnData, amount: parseFloat(e.target.value) || 0})}
                     placeholder="500"
                     required
@@ -918,13 +1008,14 @@ export default function BillingPage() {
                    <label className="form-label">Category</label>
                    <select 
                     className="form-input"
-                    value={txnData.transaction_type}
-                    onChange={(e) => setTxnData({...txnData, transaction_type: e.target.value})}
+                    value={txnData.category}
+                    onChange={(e) => setTxnData({...txnData, category: e.target.value})}
                    >
-                    <option value="consultation">Consultation</option>
-                    <option value="test">Diagnostic Test</option>
-                    <option value="medicine">Pharmacy Sale</option>
-                    <option value="other">Institutional Fee</option>
+                    <option value="Consultation">Consultation</option>
+                    <option value="Procedure">Procedure</option>
+                    <option value="Test">Test</option>
+                    <option value="Medicine">Medicine</option>
+                    <option value="Other">Other</option>
                    </select>
                 </div>
                 <div className="form-group">
@@ -934,10 +1025,11 @@ export default function BillingPage() {
                     value={txnData.payment_method}
                     onChange={(e) => setTxnData({...txnData, payment_method: e.target.value})}
                    >
-                    <option value="cash">Cash Override</option>
-                    <option value="card">Card Reader</option>
-                    <option value="online">Platform Pay</option>
-                    <option value="upi">Direct UPI</option>
+                    <option value="cash_override">Cash Override</option>
+                    <option value="bank_transfer">Bank transfer</option>
+                    <option value="cheque">Cheque</option>
+                    <option value="upi">UPI</option>
+                    <option value="card">Card</option>
                    </select>
                 </div>
                 <div className="form-group">
@@ -945,6 +1037,8 @@ export default function BillingPage() {
                    <input 
                     type="number" 
                     className="form-input" 
+                    min={0}
+                    step="0.01"
                     value={txnData.tax}
                     onChange={(e) => setTxnData({...txnData, tax: parseFloat(e.target.value) || 0})}
                     placeholder="0"
@@ -962,11 +1056,10 @@ export default function BillingPage() {
                         doctor_id: v ? parseInt(v, 10) : 0,
                       });
                     }}
-                    required
                     disabled={doctorsLoading}
                   >
                     <option value="">
-                      {doctorsLoading ? "Loading doctors…" : "Select a doctor"}
+                      {doctorsLoading ? "Loading doctors…" : "Select a doctor (optional)"}
                     </option>
                     {doctorsForTxn.map((d) => (
                       <option key={d.id} value={d.id}>
@@ -989,11 +1082,10 @@ export default function BillingPage() {
                         patient_id: v ? parseInt(v, 10) : 0,
                       });
                     }}
-                    required
                     disabled={patientsLoading}
                   >
                     <option value="">
-                      {patientsLoading ? "Loading patients…" : "Select a patient"}
+                      {patientsLoading ? "Loading patients…" : "Select a patient (optional)"}
                     </option>
                     {patientsForTxn.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -1014,7 +1106,6 @@ export default function BillingPage() {
                   onChange={(e) => setTxnData({...txnData, description: e.target.value})}
                   placeholder="In-clinic consultation fee for general medicine..."
                   style={{ minHeight: '80px' }}
-                  required
                  />
               </div>
 

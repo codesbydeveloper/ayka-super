@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Building, 
@@ -27,6 +27,7 @@ import {
   Clock,
   Send,
   History,
+  UserCheck,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '@/utils/api';
@@ -150,6 +151,130 @@ function parseRemarksListResponse(payload: unknown): UiRemark[] {
   return sortRemarksNewestFirst(raw);
 }
 
+function numVal(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function pickMetric(
+  data: Record<string, unknown>,
+  keys: string[],
+): number | null {
+  for (const k of keys) {
+    const n = numVal(data[k]);
+    if (n !== null && n >= 0) return n;
+  }
+  const nest = data.stats ?? data.statistics ?? data.summary ?? data.metrics;
+  if (nest && typeof nest === "object" && !Array.isArray(nest)) {
+    const o = nest as Record<string, unknown>;
+    for (const k of keys) {
+      const n = numVal(o[k]);
+      if (n !== null && n >= 0) return n;
+    }
+  }
+  return null;
+}
+
+function statusNorm(s: unknown): string {
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** In pipeline but past “new” / not terminal — matches “active conversion” idea */
+function isActiveConversionStatus(status: unknown): boolean {
+  const s = statusNorm(status);
+  if (!s) return false;
+  const terminal = new Set([
+    "new",
+    "lost",
+    "rejected",
+    "closed",
+    "duplicate",
+    "converted",
+    "won",
+    "closed won",
+    "completed",
+  ]);
+  return !terminal.has(s);
+}
+
+function isConvertedStatus(status: unknown): boolean {
+  const s = statusNorm(status);
+  return (
+    s.includes("convert") ||
+    s.includes("won") ||
+    s === "completed" ||
+    s === "signed"
+  );
+}
+
+function deriveClinicLeadKpis(
+  listData: Record<string, unknown> | null,
+  totalFromApi: number,
+  leadsPage: any[],
+): { pipeline: number; active: number; ratePct: number } {
+  const pipelineBase = Math.max(0, totalFromApi);
+
+  if (listData) {
+    const apiPipeline = pickMetric(listData, [
+      "total_pipeline",
+      "pipeline_total",
+      "total_leads",
+    ]);
+    const apiActive = pickMetric(listData, [
+      "active_conversion",
+      "active_leads",
+      "in_progress_count",
+      "active_count",
+    ]);
+    const apiRate = pickMetric(listData, [
+      "conversion_rate",
+      "conv_rate",
+      "conversion_rate_percent",
+    ]);
+
+    const pipeline =
+      apiPipeline !== null ? apiPipeline : pipelineBase || leadsPage.length;
+    const active =
+      apiActive !== null
+        ? apiActive
+        : leadsPage.filter((l) => isActiveConversionStatus(l?.status)).length;
+
+    if (apiRate !== null) {
+      return {
+        pipeline,
+        active,
+        ratePct: Math.min(100, Math.round(apiRate)),
+      };
+    }
+    const conv = leadsPage.filter((l) => isConvertedStatus(l?.status)).length;
+    const denom = pipeline > 0 ? pipeline : leadsPage.length;
+    return {
+      pipeline,
+      active,
+      ratePct: denom > 0 ? Math.min(100, Math.round((conv / denom) * 100)) : 0,
+    };
+  }
+
+  const pipeline = pipelineBase || leadsPage.length;
+  const active = leadsPage.filter((l) =>
+    isActiveConversionStatus(l?.status),
+  ).length;
+  const conv = leadsPage.filter((l) => isConvertedStatus(l?.status)).length;
+  return {
+    pipeline,
+    active,
+    ratePct:
+      pipeline > 0 ? Math.min(100, Math.round((conv / pipeline) * 100)) : 0,
+  };
+}
+
 async function fetchClinicLeadRemarksList(
   leadId: number | string,
 ): Promise<UiRemark[]> {
@@ -194,7 +319,7 @@ export default function ClinicLeadsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<any>(null);
+  const [listMeta, setListMeta] = useState<Record<string, unknown> | null>(null);
   const [pagination, setPagination] = useState({ skip: 0, limit: 50, total: 0 });
   const [showManualEntryModal, setShowManualEntryModal] = useState(false);
   const [showRemarksModal, setShowRemarksModal] = useState(false);
@@ -237,8 +362,12 @@ export default function ClinicLeadsPage() {
         }));
         setLeads(leadsWithHistory);
         setPagination((prev) => ({ ...prev, total }));
+        setListMeta(data);
+      } else {
+        setListMeta(null);
       }
     } catch (error) {
+       setListMeta(null);
        // Fallback mock data
        setLeads([
           {
@@ -262,6 +391,7 @@ export default function ClinicLeadsPage() {
             remarks_history: [],
           },
        ]);
+       setPagination((prev) => ({ ...prev, total: 2 }));
     } finally {
       setLoading(false);
     }
@@ -270,6 +400,11 @@ export default function ClinicLeadsPage() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  const kpi = useMemo(
+    () => deriveClinicLeadKpis(listMeta, pagination.total, leads),
+    [listMeta, pagination.total, leads],
+  );
 
   const applyRemarksToLead = (leadId: number | string, remarks: UiRemark[]) => {
     setSelectedLead((prev: any) =>
@@ -537,6 +672,30 @@ export default function ClinicLeadsPage() {
           </button>
         </div>
       )}
+
+      <div className="leads-kpi-row" aria-label="Clinic leads pipeline summary">
+        <div className="leads-kpi-card">
+          <div className="leads-kpi-card-icon leads-kpi-card-icon--slate">
+            <Target size={22} strokeWidth={2} aria-hidden />
+          </div>
+          <div className="leads-kpi-card-value">{kpi.pipeline}</div>
+          <div className="leads-kpi-card-label">Total pipeline</div>
+        </div>
+        <div className="leads-kpi-card">
+          <div className="leads-kpi-card-icon leads-kpi-card-icon--green">
+            <UserCheck size={22} strokeWidth={2} aria-hidden />
+          </div>
+          <div className="leads-kpi-card-value">{kpi.active}</div>
+          <div className="leads-kpi-card-label">Active conversion</div>
+        </div>
+        <div className="leads-kpi-card">
+          <div className="leads-kpi-card-icon leads-kpi-card-icon--amber">
+            <TrendingUp size={22} strokeWidth={2} aria-hidden />
+          </div>
+          <div className="leads-kpi-card-value">{kpi.ratePct}%</div>
+          <div className="leads-kpi-card-label">Conv. rate</div>
+        </div>
+      </div>
 
       <div className="card table-card">
          <table className="data-table">

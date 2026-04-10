@@ -182,6 +182,76 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
+
+
+  .leads-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    width: 100%;
+  }
+
+  @media (max-width: 768px) {
+    .leads-kpi-row {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .leads-kpi-card {
+    position: relative;
+    padding: 20px 20px 18px;
+    border-radius: 14px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 14px rgba(15, 23, 42, 0.04);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .leads-kpi-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .leads-kpi-card-icon--slate {
+    background: #f1f5f9;
+    color: #0f172a;
+  }
+
+  .leads-kpi-card-icon--green {
+    background: #ecfdf5;
+    color: #15803d;
+  }
+
+  .leads-kpi-card-icon--amber {
+    background: #fffbeb;
+    color: #d97706;
+  }
+
+  .leads-kpi-card-value {
+    font-size: 32px;
+    font-weight: 800;
+    color: #0f172a;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+
+  .leads-kpi-card-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: auto;
+  }
   
   /* ===== FILTER / SEARCH ===== */
   .leads-page .filter-card {

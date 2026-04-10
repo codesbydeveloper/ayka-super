@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Save,
@@ -14,6 +14,7 @@ import {
   Globe,
   CheckCircle2,
   Sparkles,
+  Package,
 } from "lucide-react";
 import { api } from "@/utils/api";
 import "../../dashboard/Dashboard.css";
@@ -36,6 +37,19 @@ type CreatedPlan = {
   created_at: string;
 };
 
+type CreatedAddonDisplay = {
+  name: string;
+  description: string;
+  monthly_price: number;
+  offer_price: number;
+  badge: string;
+  features: string[];
+  icon: string;
+  is_active: boolean;
+  is_featured: boolean;
+  id?: number;
+};
+
 const emptyPlan = () => ({
   name: "",
   monthly: 0,
@@ -50,11 +64,29 @@ const emptyPlan = () => ({
   is_active: true,
 });
 
-export default function NewSubscriptionPlanPage() {
+const emptyAddon = () => ({
+  name: "",
+  description: "",
+  monthly_price: 0,
+  offer_price: 0,
+  badge: "",
+  features: [""] as string[],
+  icon: "",
+  is_active: true,
+  is_featured: false,
+});
+
+function NewSubscriptionPlanPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isAddon = searchParams.get("kind") === "addon";
+  const catalogsHref = isAddon ? "/subscriptions?category=addon" : "/subscriptions";
+
   const [saving, setSaving] = useState(false);
   const [plan, setPlan] = useState(emptyPlan);
   const [created, setCreated] = useState<CreatedPlan | null>(null);
+  const [addon, setAddon] = useState(emptyAddon);
+  const [addonCreated, setAddonCreated] = useState<CreatedAddonDisplay | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleAddFeature = () => {
@@ -76,9 +108,86 @@ export default function NewSubscriptionPlanPage() {
     });
   };
 
+  const handleAddonAddFeature = () => {
+    setAddon((a) => ({ ...a, features: [...a.features, ""] }));
+  };
+
+  const handleAddonRemoveFeature = (index: number) => {
+    setAddon((a) => ({
+      ...a,
+      features: a.features.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleAddonFeatureChange = (index: number, value: string) => {
+    setAddon((a) => {
+      const next = [...a.features];
+      next[index] = value;
+      return { ...a, features: next };
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (isAddon) {
+      const filteredFeatures = addon.features.map((f) => f.trim()).filter(Boolean);
+      if (!addon.name.trim()) {
+        setError("Add a name for this add-on.");
+        return;
+      }
+      if (filteredFeatures.length === 0) {
+        setError("Add at least one feature.");
+        return;
+      }
+
+      const payload = {
+        name: addon.name.trim(),
+        description: addon.description.trim(),
+        monthly_price: Number(addon.monthly_price),
+        offer_price: Number(addon.offer_price),
+        badge: addon.badge.trim(),
+        features: filteredFeatures,
+        icon: addon.icon.trim() || "package",
+        is_active: addon.is_active,
+        is_featured: addon.is_featured,
+      };
+
+      setSaving(true);
+      try {
+        const result = await api.post<{
+          success?: boolean;
+          message?: string;
+          data?: Record<string, unknown>;
+        }>("/api/v1/super-admin/addon-services", payload);
+
+        if (result.success === false) {
+          setError(result.message || "Could not create this add-on.");
+          return;
+        }
+
+        const d = result.data;
+        const rawId = d?.id;
+        const id =
+          typeof rawId === "number"
+            ? rawId
+            : typeof rawId === "string" && rawId.trim() !== ""
+              ? Number(rawId)
+              : undefined;
+
+        setAddonCreated({
+          ...payload,
+          id: Number.isFinite(id) ? id : undefined,
+        });
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Request failed.");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
 
     const filteredFeatures = plan.features.map((f) => f.trim()).filter(Boolean);
     if (filteredFeatures.length === 0) {
@@ -125,7 +234,7 @@ export default function NewSubscriptionPlanPage() {
     new Intl.NumberFormat("en-IN", {
       style: "currency",
       currency: "INR",
-      maximumFractionDigits: 0,
+      maximumFractionDigits: Number.isInteger(n) ? 0 : 2,
     }).format(n);
 
   const resetAnother = () => {
@@ -134,6 +243,14 @@ export default function NewSubscriptionPlanPage() {
     setError(null);
   };
 
+  const resetAddonAnother = () => {
+    setAddonCreated(null);
+    setAddon(emptyAddon());
+    setError(null);
+  };
+
+  const showSuccess = isAddon ? addonCreated != null : created != null;
+
   return (
     <div className="page-container subscriptions-page sub-create">
       <div className="page-header">
@@ -141,31 +258,110 @@ export default function NewSubscriptionPlanPage() {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => router.push("/subscriptions")}
+            onClick={() => router.push(catalogsHref)}
             style={{ padding: "9px 14px" }}
             aria-label="Back"
           >
             <ArrowLeft size={18} />
           </button>
           <div>
-            <h1 className="page-title">Create Subscription Tier</h1>
+            <h1 className="page-title">
+              {isAddon ? "Create Add-on Service" : "Create Subscription Tier"}
+            </h1>
             <p className="page-subtitle">
-              Define price points, quotas and feature access for clinics.
+              {isAddon
+                ? "Describe the add-on, set list and offer pricing, and list what buyers get."
+                : "Define price points, quotas and feature access for clinics."}
             </p>
           </div>
         </div>
-        {created ? (
+        {showSuccess ? (
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => router.push("/subscriptions")}
+            onClick={() => router.push(catalogsHref)}
           >
-            All plans
+            {isAddon ? "Add-on catalog" : "All plans"}
           </button>
         ) : null}
       </div>
 
-      {created ? (
+      {isAddon && addonCreated ? (
+        <div className="plan-created-receipt plan-created-receipt--enter">
+          <div className="plan-created-receipt__ribbon">
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <CheckCircle2 size={17} strokeWidth={2.25} />
+              Saved · SA-ADDON-01
+            </span>
+          </div>
+          <div className="plan-created-receipt__body">
+            <p className="plan-created-receipt__eyebrow">New add-on service</p>
+            <div className="plan-created-receipt__title">
+              <span className="plan-created-receipt__name">{addonCreated.name}</span>
+              {addonCreated.badge ? (
+                <span className="plan-created-receipt__badge">{addonCreated.badge}</span>
+              ) : null}
+            </div>
+            {addonCreated.description ? (
+              <p className="plan-created-receipt__lede">{addonCreated.description}</p>
+            ) : (
+              <p className="plan-created-receipt__lede">
+                {addonCreated.is_active
+                  ? "This add-on is active. Clinics can discover it where add-ons are sold."
+                  : "This add-on is inactive until you turn it on."}
+              </p>
+            )}
+
+            <div className="plan-created-receipt__stats">
+              <div className="plan-created-receipt__stat">
+                <span className="plan-created-receipt__stat-k">List (monthly)</span>
+                <span className="plan-created-receipt__stat-v">
+                  {formatInr(addonCreated.monthly_price)}
+                </span>
+              </div>
+              <div className="plan-created-receipt__stat">
+                <span className="plan-created-receipt__stat-k">Offer price</span>
+                <span className="plan-created-receipt__stat-v">
+                  {formatInr(addonCreated.offer_price)}
+                </span>
+              </div>
+              <div className="plan-created-receipt__stat">
+                <span className="plan-created-receipt__stat-k">Icon key</span>
+                <span className="plan-created-receipt__stat-v">{addonCreated.icon}</span>
+              </div>
+              <div className="plan-created-receipt__stat">
+                <span className="plan-created-receipt__stat-k">Featured</span>
+                <span className="plan-created-receipt__stat-v">
+                  {addonCreated.is_featured ? "Yes" : "No"}
+                </span>
+              </div>
+            </div>
+
+            <ul className="plan-created-receipt__features">
+              {addonCreated.features.map((f, i) => (
+                <li key={i}>
+                  <Check size={14} strokeWidth={2.5} />
+                  {f}
+                </li>
+              ))}
+            </ul>
+
+            <div className="plan-created-receipt__actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => router.push(catalogsHref)}
+              >
+                <Sparkles size={18} />
+                View catalog
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={resetAddonAnother}>
+                Create another add-on
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : created ? (
         <div className="plan-created-receipt plan-created-receipt--enter">
           <div className="plan-created-receipt__ribbon">
             <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -252,7 +448,7 @@ export default function NewSubscriptionPlanPage() {
               <button
                 type="button"
                 className="btn btn-primary"
-                onClick={() => router.push("/subscriptions")}
+                onClick={() => router.push(catalogsHref)}
               >
                 <Sparkles size={18} />
                 View catalog
@@ -263,6 +459,217 @@ export default function NewSubscriptionPlanPage() {
             </div>
           </div>
         </div>
+      ) : isAddon ? (
+        <form onSubmit={handleSubmit}>
+          {error ? (
+            <div className="sub-create-error" role="alert">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="sub-create-form">
+            <div className="sub-create-stack">
+              <div className="card sub-create-card">
+                <h2 className="sub-create-card__title sub-create-card__title--spaced">
+                  <Package size={20} className="sub-create-icon--violet" />
+                  Add-on details &amp; pricing
+                </h2>
+                <div className="sub-create-grid2">
+                  <div className="sub-create-field sub-create-span2">
+                    <label htmlFor="addon-name">Name</label>
+                    <input
+                      id="addon-name"
+                      type="text"
+                      className="sub-create-input sub-create-input--strong"
+                      required
+                      autoComplete="off"
+                      value={addon.name}
+                      onChange={(e) => setAddon({ ...addon, name: e.target.value })}
+                      placeholder="e.g. WhatsApp Notifications"
+                    />
+                  </div>
+                  <div className="sub-create-field sub-create-span2">
+                    <label htmlFor="addon-desc">Description</label>
+                    <textarea
+                      id="addon-desc"
+                      className="sub-create-input"
+                      rows={3}
+                      value={addon.description}
+                      onChange={(e) =>
+                        setAddon({ ...addon, description: e.target.value })
+                      }
+                      placeholder="Short description for the catalog"
+                    />
+                  </div>
+                  <div className="sub-create-field">
+                    <label htmlFor="addon-monthly">Monthly price (₹)</label>
+                    <input
+                      id="addon-monthly"
+                      type="number"
+                      className="sub-create-input"
+                      required
+                      min={0}
+                      step="0.01"
+                      value={addon.monthly_price}
+                      onChange={(e) =>
+                        setAddon({
+                          ...addon,
+                          monthly_price: Number(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="sub-create-field">
+                    <label htmlFor="addon-offer">Offer price (₹)</label>
+                    <input
+                      id="addon-offer"
+                      type="number"
+                      className="sub-create-input"
+                      required
+                      min={0}
+                      step="0.01"
+                      value={addon.offer_price}
+                      onChange={(e) =>
+                        setAddon({ ...addon, offer_price: Number(e.target.value) })
+                      }
+                    />
+                  </div>
+                  <div className="sub-create-field">
+                    <label htmlFor="addon-badge">Badge (optional)</label>
+                    <input
+                      id="addon-badge"
+                      type="text"
+                      className="sub-create-input"
+                      value={addon.badge}
+                      onChange={(e) => setAddon({ ...addon, badge: e.target.value })}
+                      placeholder='e.g. 20% OFF'
+                    />
+                  </div>
+                  <div className="sub-create-field">
+                    <label htmlFor="addon-icon">Icon key</label>
+                    <input
+                      id="addon-icon"
+                      type="text"
+                      className="sub-create-input"
+                      value={addon.icon}
+                      onChange={(e) => setAddon({ ...addon, icon: e.target.value })}
+                      placeholder="e.g. whatsapp (default: package)"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="card sub-create-card">
+                <div className="sub-create-card__head">
+                  <h2 className="sub-create-card__title" style={{ marginBottom: 0 }}>
+                    <ShieldCheck size={20} className="sub-create-icon--green" />
+                    Features
+                  </h2>
+                  <button
+                    type="button"
+                    className="btn btn-secondary sub-create-add-btn"
+                    onClick={handleAddonAddFeature}
+                  >
+                    <Plus size={16} />
+                    Add feature
+                  </button>
+                </div>
+                <div className="sub-create-feature-rows">
+                  {addon.features.map((feature, index) => (
+                    <div className="sub-create-feature-row" key={index}>
+                      <div className="sub-create-feature-check" aria-hidden>
+                        <Check size={18} />
+                      </div>
+                      <input
+                        type="text"
+                        className="sub-create-input"
+                        value={feature}
+                        onChange={(e) =>
+                          handleAddonFeatureChange(index, e.target.value)
+                        }
+                        placeholder="e.g. Unlimited messages"
+                      />
+                      {addon.features.length > 1 ? (
+                        <button
+                          type="button"
+                          className="sub-create-feature-remove"
+                          onClick={() => handleAddonRemoveFeature(index)}
+                          aria-label="Remove"
+                        >
+                          <Plus
+                            size={18}
+                            style={{ transform: "rotate(45deg)" }}
+                          />
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="sub-create-stack">
+              <div className="card sub-create-card">
+                <h2 className="sub-create-card__title sub-create-card__title--spaced">
+                  <Globe size={20} className="sub-create-icon--amber" />
+                  Visibility
+                </h2>
+                <label className="sub-create-toggle">
+                  <div>
+                    <span className="sub-create-toggle__title">Active</span>
+                    <span className="sub-create-toggle__hint">
+                      When on, this add-on can be offered where add-ons are configured.
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={addon.is_active}
+                    onChange={(e) =>
+                      setAddon({ ...addon, is_active: e.target.checked })
+                    }
+                  />
+                </label>
+                <label className="sub-create-toggle" style={{ marginTop: 16 }}>
+                  <div>
+                    <span className="sub-create-toggle__title">Featured</span>
+                    <span className="sub-create-toggle__hint">
+                      Highlight this add-on in promotional slots.
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={addon.is_featured}
+                    onChange={(e) =>
+                      setAddon({ ...addon, is_featured: e.target.checked })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="sub-create-actions">
+                <button
+                  type="submit"
+                  className="btn btn-primary sub-create-submit"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <Loader2 size={20} className="sub-create-spin" />
+                  ) : (
+                    <Save size={20} />
+                  )}
+                  {saving ? "Creating…" : "Create Add-on Service"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary sub-create-discard"
+                  onClick={() => router.push(catalogsHref)}
+                >
+                  Discard changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
       ) : (
         <form onSubmit={handleSubmit}>
           {error ? (
@@ -527,7 +934,7 @@ export default function NewSubscriptionPlanPage() {
                 <button
                   type="button"
                   className="btn btn-secondary sub-create-discard"
-                  onClick={() => router.push("/subscriptions")}
+                  onClick={() => router.push(catalogsHref)}
                 >
                   Discard changes
                 </button>
@@ -537,5 +944,27 @@ export default function NewSubscriptionPlanPage() {
         </form>
       )}
     </div>
+  );
+}
+
+function NewSubscriptionFallback() {
+  return (
+    <div className="page-container subscriptions-page sub-create">
+      <div className="page-header">
+        <h1 className="page-title">Create tier</h1>
+        <p className="page-subtitle">Loading…</p>
+      </div>
+      <div className="subscriptions-loading" style={{ padding: 48 }}>
+        <Loader2 className="subscriptions-loading__spin" size={34} />
+      </div>
+    </div>
+  );
+}
+
+export default function NewSubscriptionPlanPage() {
+  return (
+    <Suspense fallback={<NewSubscriptionFallback />}>
+      <NewSubscriptionPlanPageContent />
+    </Suspense>
   );
 }

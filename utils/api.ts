@@ -113,6 +113,25 @@ export const api = {
     return payload as T;
   },
 
+  async patch<T = ApiPostResult>(path: string, body: unknown = {}): Promise<T> {
+    const url = path.startsWith("http") ? path : `${base}${path}`;
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: authHeaders(),
+      body: JSON.stringify(body ?? {}),
+    });
+
+    const payload = await parseJsonBody(res);
+
+    if (!res.ok) {
+      throw new Error(
+        errorMessageFromPayload(payload, `Request failed (${res.status})`),
+      );
+    }
+
+    return payload as T;
+  },
+
   async delete<T = ApiPostResult>(path: string): Promise<T> {
     const url = path.startsWith("http") ? path : `${base}${path}`;
     const res = await fetch(url, {
