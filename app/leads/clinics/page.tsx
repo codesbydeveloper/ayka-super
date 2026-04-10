@@ -31,7 +31,6 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '@/utils/api';
-import '../Leads.css';
 
 function clinicLeadsBase(): string {
   if (typeof window === 'undefined') return '/api/v1/super-admin/leads/clinic-leads';

@@ -149,8 +149,11 @@ function mapActivityRecordToFeedItem(
       : typeof staffId === "string" && staffId
         ? `Staff #${staffId}`
         : "System");
+  const rawId = o.id;
+  const id: string | number =
+    typeof rawId === "string" || typeof rawId === "number" ? rawId : index;
   return {
-    id: o.id ?? index,
+    id,
     type: normalizeActivityIconKey(action),
     user,
     detail: str(o.description, ""),
