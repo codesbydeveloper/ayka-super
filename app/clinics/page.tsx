@@ -169,17 +169,26 @@ function clinicRenewalBucketCounts(clinicsList: unknown[]) {
 }
 
 export default function ClinicsPage() {
+  const initialCreateClinicData = () => ({
+    name: "",
+    type: "",
+    state_code: "",
+    city_id: 0,
+    pin_code: "",
+    address: "",
+    subscription_plan_id: 0,
+    owner_first_name: "",
+    owner_last_name: "",
+    owner_email: "",
+    owner_phone: "",
+    owner_password: "",
+    send_welcome_email: true,
+    franchise_id: "" as string,
+  });
+
   const handleAddNewClinic = () => {
     setIsCreateModalOpen(true);
-    setCreateData({
-      name: '',
-      type: 'clinic',
-      state_code: '',
-      city_id: 0,
-      pin_code: '',
-      address: '',
-      subscription_plan_id: 0,
-    });
+    setCreateData(initialCreateClinicData());
   };
 
   const router = useRouter();
@@ -216,15 +225,7 @@ export default function ClinicsPage() {
 
   // Create Clinic Modal State
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [createData, setCreateData] = useState({
-    name: '',
-    type: 'clinic',
-    state_code: '',
-    city_id: 0,
-    pin_code: '',
-    address: '',
-    subscription_plan_id: 0,
-  });
+  const [createData, setCreateData] = useState(initialCreateClinicData);
   const [creating, setCreating] = useState(false);
   const [states, setStates] = useState<any[]>([]);
   const [cities, setCities] = useState<any[]>([]);
@@ -242,43 +243,91 @@ export default function ClinicsPage() {
 
   const handleCreateClinicSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Basic validation
+
     if (
       !createData.name?.trim() ||
+      !createData.type?.trim() ||
       !createData.state_code ||
       !createData.city_id ||
       !createData.pin_code?.trim() ||
       !createData.address?.trim() ||
-      !createData.subscription_plan_id
+      !createData.owner_first_name?.trim() ||
+      !createData.owner_last_name?.trim() ||
+      !createData.owner_email?.trim() ||
+      !createData.owner_phone?.trim()
     ) {
-      alert('Please fill all required fields');
+      alert("Please fill all required fields, including owner details.");
       return;
     }
 
+    const pin = createData.pin_code.replace(/\s/g, "");
+    if (!/^\d{6}$/.test(pin)) {
+      alert("PIN code must be exactly 6 digits.");
+      return;
+    }
+
+    const phone = createData.owner_phone.replace(/\s/g, "");
+    if (!/^\d{10}$/.test(phone)) {
+      alert("Owner phone must be a 10-digit mobile number.");
+      return;
+    }
+
+    const franchiseNum = createData.franchise_id.trim()
+      ? Number(createData.franchise_id.trim())
+      : NaN;
+    const franchise_id =
+      Number.isFinite(franchiseNum) && franchiseNum > 0 ? franchiseNum : null;
+
     setCreating(true);
     try {
-      // POST /api/v1/clinics — Content-Type: application/json, Authorization: Bearer (api.post)
-      const payload = {
-        name: createData.name.trim(),
-        type: createData.type,
-        state_code: createData.state_code,
+      const payload: Record<string, unknown> = {
+        clinic_name: createData.name.trim(),
+        clinic_type: createData.type.trim(),
+        state_code: createData.state_code.trim(),
         city_id: Number(createData.city_id),
-        pin_code: createData.pin_code.trim(),
+        pin_code: pin,
         address: createData.address.trim(),
-        subscription_plan_id: Number(createData.subscription_plan_id),
+        owner_first_name: createData.owner_first_name.trim(),
+        owner_last_name: createData.owner_last_name.trim(),
+        owner_email: createData.owner_email.trim(),
+        owner_phone: phone,
+        send_welcome_email: createData.send_welcome_email,
+        franchise_id,
       };
-      const result = await api.post(backendApiUrl('/api/v1/clinics'), payload);
+      const pw = createData.owner_password.trim();
+      if (pw) payload.owner_password = pw;
 
-      if (result.success !== false) {
-        alert("Success: Medical center registered in Ayka ecosystem.");
-        setIsCreateModalOpen(false);
-        fetchClinics(); // Refresh list
-      } else {
-        alert(result.message || 'Transmission failed. Plateform error.');
+      const result = (await api.post(
+        "/api/v1/platform/clinics",
+        payload,
+      )) as {
+        success?: boolean;
+        message?: string;
+      };
+
+      if (result && result.success === false) {
+        alert(
+          typeof result.message === "string"
+            ? result.message
+            : "Clinic was not created.",
+        );
+        return;
       }
-    } catch (err: any) {
-      alert(err.message || 'API connection failed. Please check network.');
+
+      alert(
+        typeof result.message === "string" && result.message
+          ? result.message
+          : "Clinic created successfully.",
+      );
+      setIsCreateModalOpen(false);
+      setCreateData(initialCreateClinicData());
+      fetchClinics();
+    } catch (err: unknown) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "API connection failed. Please check network.",
+      );
     } finally {
       setCreating(false);
     }
@@ -1082,7 +1131,7 @@ export default function ClinicsPage() {
 
       {/* Create Clinic Modal */}
       {isCreateModalOpen && (
-        <div className="modal-overlay">
+        <div className="modal-overlay clinic-create-modal-overlay">
           <div className="modal-content modal-content--wide">
             <div className="modal-header">
               <h3 className="modal-title">Register New Medical Center</h3>
@@ -1090,7 +1139,10 @@ export default function ClinicsPage() {
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleCreateClinicSubmit}>
+            <form
+              className="clinic-create-modal-form"
+              onSubmit={handleCreateClinicSubmit}
+            >
               <div className="modal-body">
                 <div className="form-group">
                   <label className="form-label">Full Name of Center <span style={{ color: 'var(--danger)' }}>*</span></label>
@@ -1145,8 +1197,20 @@ export default function ClinicsPage() {
                 <div className="form-group">
                   <label className="form-label">
                     Subscription plan{" "}
-                    <span style={{ color: "var(--danger)" }}>*</span>
+                    <span style={{ color: "var(--text-muted)", fontWeight: 500 }}>
+                      (optional)
+                    </span>
                   </label>
+                  <p
+                    style={{
+                      fontSize: "12px",
+                      color: "var(--text-muted)",
+                      margin: "0 0 8px",
+                    }}
+                  >
+                    Not sent with clinic create; assign a plan after registration if
+                    needed.
+                  </p>
                   <div style={{ position: "relative" }}>
                     <select
                       className="form-input"
@@ -1157,7 +1221,6 @@ export default function ClinicsPage() {
                           subscription_plan_id: parseInt(e.target.value, 10) || 0,
                         })
                       }
-                      required
                       disabled={loadingPlans || subscriptionPlans.length === 0}
                     >
                       <option value="">
@@ -1165,7 +1228,7 @@ export default function ClinicsPage() {
                           ? "Loading plans…"
                           : subscriptionPlans.length === 0
                             ? "No clinic plans available"
-                            : "Select subscription plan"}
+                            : "Select subscription plan (optional)"}
                       </option>
                       {subscriptionPlans
                         .filter((p) => p.is_active !== false)
@@ -1235,6 +1298,160 @@ export default function ClinicsPage() {
                     placeholder="Enter full address details..."
                     style={{ minHeight: '80px' }}
                     required
+                  />
+                </div>
+
+                <h4
+                  style={{
+                    fontSize: "14px",
+                    fontWeight: 700,
+                    margin: "20px 0 12px",
+                    color: "var(--text-primary, #1e293b)",
+                  }}
+                >
+                  Clinic owner (login account)
+                </h4>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">
+                      Owner first name{" "}
+                      <span style={{ color: "var(--danger)" }}>*</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={createData.owner_first_name}
+                      onChange={(e) =>
+                        setCreateData({
+                          ...createData,
+                          owner_first_name: e.target.value,
+                        })
+                      }
+                      placeholder="Rahul"
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">
+                      Owner last name{" "}
+                      <span style={{ color: "var(--danger)" }}>*</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={createData.owner_last_name}
+                      onChange={(e) =>
+                        setCreateData({
+                          ...createData,
+                          owner_last_name: e.target.value,
+                        })
+                      }
+                      placeholder="Sharma"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">
+                      Owner email{" "}
+                      <span style={{ color: "var(--danger)" }}>*</span>
+                    </label>
+                    <input
+                      type="email"
+                      className="form-input"
+                      value={createData.owner_email}
+                      onChange={(e) =>
+                        setCreateData({
+                          ...createData,
+                          owner_email: e.target.value,
+                        })
+                      }
+                      placeholder="owner@clinic.com"
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">
+                      Owner phone{" "}
+                      <span style={{ color: "var(--danger)" }}>*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      className="form-input"
+                      value={createData.owner_phone}
+                      onChange={(e) =>
+                        setCreateData({
+                          ...createData,
+                          owner_phone: e.target.value,
+                        })
+                      }
+                      placeholder="9876543210"
+                      maxLength={14}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">
+                      Owner password{" "}
+                      <span style={{ color: "var(--text-muted)", fontWeight: 500 }}>
+                        (optional)
+                      </span>
+                    </label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      autoComplete="new-password"
+                      value={createData.owner_password}
+                      onChange={(e) =>
+                        setCreateData({
+                          ...createData,
+                          owner_password: e.target.value,
+                        })
+                      }
+                      placeholder="Leave blank to auto-generate"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label
+                      className="form-label"
+                      style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={createData.send_welcome_email}
+                        onChange={(e) =>
+                          setCreateData({
+                            ...createData,
+                            send_welcome_email: e.target.checked,
+                          })
+                        }
+                      />
+                      Send welcome email with credentials
+                    </label>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">
+                    Franchise ID{" "}
+                    <span style={{ color: "var(--text-muted)", fontWeight: 500 }}>
+                      (optional, super admin)
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    min={1}
+                    value={createData.franchise_id}
+                    onChange={(e) =>
+                      setCreateData({
+                        ...createData,
+                        franchise_id: e.target.value,
+                      })
+                    }
+                    placeholder="Assign to franchise — numeric id, or leave empty"
                   />
                 </div>
               </div>

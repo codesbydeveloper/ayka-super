@@ -111,54 +111,12 @@ interface FranchiseRecord {
   is_active: boolean;
   is_verified?: boolean;
   owner_name?: string;
-  /** For GET /admin-staff-management/staff/{staff_id} — owner / linked admin staff */
-  staff_id?: number;
   state_name?: string;
   district_name?: string;
   city_name?: string;
   state_id?: number;
   district_id?: number;
   city_id?: number;
-}
-
-function parsePositiveInt(v: unknown): number | undefined {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim() !== "") {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return undefined;
-}
-
-/**
- * staff_id for GET /admin-staff-management/staff/{staff_id} from franchise payload.
- */
-function extractFranchiseStaffId(r: Record<string, unknown>): number | undefined {
-  const direct =
-    parsePositiveInt(r.staff_id) ??
-    parsePositiveInt(r.owner_staff_id) ??
-    parsePositiveInt(r.admin_staff_id) ??
-    parsePositiveInt(r.franchise_staff_id) ??
-    parsePositiveInt(r.linked_staff_id);
-  if (direct != null) return direct;
-
-  const owner = r.owner;
-  if (owner && typeof owner === "object" && !Array.isArray(owner)) {
-    const o = owner as Record<string, unknown>;
-    return (
-      parsePositiveInt(o.staff_id) ??
-      parsePositiveInt(o.id) ??
-      parsePositiveInt(o.user_id)
-    );
-  }
-
-  const user = r.user;
-  if (user && typeof user === "object" && !Array.isArray(user)) {
-    const u = user as Record<string, unknown>;
-    return parsePositiveInt(u.staff_id) ?? parsePositiveInt(u.id);
-  }
-
-  return undefined;
 }
 
 function normalizeFranchiseRow(raw: unknown): FranchiseRecord | null {
@@ -173,8 +131,6 @@ function normalizeFranchiseRow(raw: unknown): FranchiseRecord | null {
     r.district_id != null ? Number(r.district_id) : undefined;
   const cid = r.city_id != null ? Number(r.city_id) : undefined;
 
-  const staff_id = extractFranchiseStaffId(r);
-
   return {
     id,
     name: typeof r.name === "string" ? r.name : "",
@@ -187,7 +143,6 @@ function normalizeFranchiseRow(raw: unknown): FranchiseRecord | null {
       typeof r.is_verified === "boolean" ? r.is_verified : undefined,
     owner_name:
       typeof r.owner_name === "string" ? r.owner_name : undefined,
-    staff_id,
     state_name:
       typeof r.state_name === "string"
         ? r.state_name
@@ -195,9 +150,17 @@ function normalizeFranchiseRow(raw: unknown): FranchiseRecord | null {
           ? r.state
           : undefined,
     district_name:
-      typeof r.district_name === "string" ? r.district_name : undefined,
+      typeof r.district_name === "string"
+        ? r.district_name
+        : typeof r.district === "string"
+          ? r.district
+          : undefined,
     city_name:
-      typeof r.city_name === "string" ? r.city_name : undefined,
+      typeof r.city_name === "string"
+        ? r.city_name
+        : typeof r.city === "string"
+          ? r.city
+          : undefined,
     state_id: Number.isFinite(sid ?? NaN) ? sid : undefined,
     district_id: Number.isFinite(did ?? NaN) ? did : undefined,
     city_id: Number.isFinite(cid ?? NaN) ? cid : undefined,
@@ -218,7 +181,7 @@ function franchiseGeoSummary(f: FranchiseRecord): string[] {
 
 type HierarchyTab = "roles" | "franchises";
 
-/** POST /api/v1/admin-staff-management/staff request body (OpenAPI). */
+
 type CreateStaffPermissions = {
   can_view_clinics: boolean;
   can_edit_clinics: boolean;
@@ -235,7 +198,7 @@ type CreateStaffPermissions = {
   can_view_analytics: boolean;
 };
 
-/** Values sent as `role` on create staff */
+
 const STAFF_ROLE_OPTIONS = [
   "Executive",
   "Manager",
@@ -246,7 +209,7 @@ const STAFF_ROLE_OPTIONS = [
   "L5",
 ] as const;
 
-/** Designation dropdown — matches staff details / franchise hierarchy */
+
 const STAFF_DESIGNATION_OPTIONS = [
   "Company Employee",
   "State Franchise",
@@ -431,9 +394,9 @@ export default function StaffPage() {
   const [franchises, setFranchises] = useState<FranchiseRecord[]>([]);
   const [franchisesLoading, setFranchisesLoading] = useState(false);
   const [deletingStaffId, setDeletingStaffId] = useState<number | null>(null);
-  const [openingStaffProfileId, setOpeningStaffProfileId] = useState<
-    number | null
-  >(null);
+  const [deletingFranchiseId, setDeletingFranchiseId] = useState<number | null>(
+    null,
+  );
   const [showForm, setShowForm] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   
@@ -545,33 +508,48 @@ export default function StaffPage() {
     }
   }, []);
 
-  /** GET staff by id, bootstrap detail page cache, then navigate (Roles + Franchises). */
-  const openAdminStaffDetail = useCallback(
-    async (staffId: number) => {
-      setOpeningStaffProfileId(staffId);
-      try {
-        const result = await api.get<Record<string, unknown>>(
-          `/api/v1/admin-staff-management/staff/${encodeURIComponent(String(staffId))}`,
-        );
-        try {
-          sessionStorage.setItem(
-            `ayka_staff_detail_bootstrap_${staffId}`,
-            JSON.stringify({ at: Date.now(), payload: result }),
-          );
-        } catch {
-          /* quota / private mode */
-        }
-        router.push(`/staff/details?id=${staffId}&mode=view`);
-      } catch (e: unknown) {
-        alert(
-          e instanceof Error ? e.message : "Could not load staff details.",
-        );
-      } finally {
-        setOpeningStaffProfileId(null);
+
+  const handleFranchiseViewProfile = (f: FranchiseRecord) => {
+    if (!Number.isFinite(f.id)) return;
+    router.push(
+      `/staff/franchise-details?id=${encodeURIComponent(String(f.id))}`,
+    );
+  };
+
+  const franchiseDeletePath = (franchiseId: number, force: boolean) =>
+    `/api/v1/super-admin/franchises/franchises/${encodeURIComponent(String(franchiseId))}${
+      force ? "?force=true" : ""
+    }`;
+
+  const handleDeleteFranchise = async (f: FranchiseRecord) => {
+    const label = f.name?.trim() || f.email || "this franchise";
+    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    setDeletingFranchiseId(f.id);
+    try {
+      await api.delete(franchiseDeletePath(f.id, false));
+      setFranchises((prev) => prev.filter((x) => x.id !== f.id));
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error ? e.message : "Could not delete franchise.";
+      if (
+        !confirm(
+          `${msg}\n\nForce delete? This may orphan associated clinics and staff.`,
+        )
+      ) {
+        return;
       }
-    },
-    [router],
-  );
+      try {
+        await api.delete(franchiseDeletePath(f.id, true));
+        setFranchises((prev) => prev.filter((x) => x.id !== f.id));
+      } catch (e2: unknown) {
+        alert(
+          e2 instanceof Error ? e2.message : "Force delete failed.",
+        );
+      }
+    } finally {
+      setDeletingFranchiseId(null);
+    }
+  };
 
   const handleDeleteStaffMember = useCallback(
     async (user: AdminUser) => {
@@ -964,27 +942,13 @@ export default function StaffPage() {
                 <button
                   type="button"
                   className="btn btn-secondary staff-card-actions-primary"
-                  disabled={
-                    openingStaffProfileId === staffDetailPathId(user)
-                  }
                   onClick={() =>
-                    void openAdminStaffDetail(staffDetailPathId(user))
+                    router.push(
+                      `/staff/details?id=${staffDetailPathId(user)}&mode=view`,
+                    )
                   }
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px",
-                  }}
                 >
-                  {openingStaffProfileId === staffDetailPathId(user) ? (
-                    <>
-                      <Loader2 className="animate-spin" size={16} />
-                      <span>Loading…</span>
-                    </>
-                  ) : (
-                    "View Profile"
-                  )}
+                  View Profile
                 </button>
                 <div className="staff-card-actions-icons">
                   <button
@@ -1313,37 +1277,37 @@ export default function StaffPage() {
                     <button
                       type="button"
                       className="btn btn-secondary staff-card-actions-primary"
-                      disabled={
-                        f.staff_id == null ||
-                        !Number.isFinite(f.staff_id) ||
-                        openingStaffProfileId === f.staff_id
-                      }
-                      title={
-                        f.staff_id == null || !Number.isFinite(f.staff_id)
-                          ? "No linked staff id on this franchise (need staff_id, owner_staff_id, or owner.staff_id from API)."
-                          : undefined
-                      }
-                      onClick={() => {
-                        if (f.staff_id == null || !Number.isFinite(f.staff_id))
-                          return;
-                        void openAdminStaffDetail(f.staff_id);
-                      }}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "8px",
-                      }}
+                      onClick={() => handleFranchiseViewProfile(f)}
                     >
-                      {openingStaffProfileId === f.staff_id ? (
-                        <>
-                          <Loader2 className="animate-spin" size={16} />
-                          <span>Loading…</span>
-                        </>
-                      ) : (
-                        "View profile"
-                      )}
+                      View profile
                     </button>
+                    <div className="staff-card-actions-icons">
+                      <button
+                        type="button"
+                        className="btn btn-primary staff-card-icon-btn"
+                        aria-label="Edit franchise"
+                        onClick={() =>
+                          router.push(
+                            `/staff/franchise-details?id=${encodeURIComponent(String(f.id))}&mode=edit`,
+                          )
+                        }
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary staff-card-icon-btn staff-card-icon-btn-danger"
+                        aria-label="Delete franchise"
+                        disabled={deletingFranchiseId === f.id}
+                        onClick={() => void handleDeleteFranchise(f)}
+                      >
+                        {deletingFranchiseId === f.id ? (
+                          <Loader2 className="animate-spin" size={16} />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

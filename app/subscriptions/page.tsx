@@ -18,6 +18,10 @@ import {
 import "../dashboard/Dashboard.css";
 import "./Subscriptions.css";
 import { api } from "@/utils/api";
+import {
+  type AddonDisplay,
+  parseAddonServicesPayload,
+} from "@/utils/addonServices";
 
 type ApiSubscriptionPlan = {
   id: number;
@@ -113,6 +117,11 @@ export default function SubscriptionsPage() {
     "clinic" | "expert" | "addon"
   >("clinic");
 
+  const [addons, setAddons] = useState<AddonDisplay[]>([]);
+  const [addonLoading, setAddonLoading] = useState(false);
+  const [addonFetchError, setAddonFetchError] = useState<string | null>(null);
+  const [deletingAddonId, setDeletingAddonId] = useState<number | null>(null);
+
   const fetchPlans = useCallback(async () => {
     setLoading(true);
     setFetchError(null);
@@ -133,11 +142,69 @@ export default function SubscriptionsPage() {
     }
   }, []);
 
+  const fetchAddons = useCallback(async () => {
+    setAddonLoading(true);
+    setAddonFetchError(null);
+    try {
+      const result = await api.get<Record<string, unknown>>(
+        "/api/v1/super-admin/addon-services?include_inactive=true&featured_only=false",
+      );
+      setAddons(parseAddonServicesPayload(result));
+    } catch (err: unknown) {
+      console.error("Fetch add-on services error:", err);
+      setAddons([]);
+      setAddonFetchError(
+        err instanceof Error ? err.message : "Could not load add-on services.",
+      );
+    } finally {
+      setAddonLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchPlans();
   }, [fetchPlans]);
 
+  useEffect(() => {
+    if (activeCategory !== "addon") return;
+    void fetchAddons();
+  }, [activeCategory, fetchAddons]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const c = new URLSearchParams(window.location.search).get("category");
+    if (c === "addon" || c === "expert" || c === "clinic") {
+      setActiveCategory(c);
+    }
+  }, []);
+
   const filteredPlans = plans.filter((p) => p.category === activeCategory);
+
+  const goCreateTier = () =>
+    router.push(
+      activeCategory === "addon"
+        ? "/subscriptions/new?kind=addon"
+        : "/subscriptions/new",
+    );
+
+  const handleDeleteAddon = async (addonId: number) => {
+    if (!confirm("Delete this add-on service? This cannot be undone.")) return;
+    setDeletingAddonId(addonId);
+    try {
+      const result = await api.delete<{ success?: boolean; message?: string }>(
+        `/api/v1/super-admin/addon-services/${addonId}`,
+      );
+      if (result.success === false) {
+        alert(result.message || "Could not delete this add-on.");
+        return;
+      }
+      await fetchAddons();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Could not delete this add-on.");
+    } finally {
+      setDeletingAddonId(null);
+    }
+  };
 
   return (
     <div className="page-container subscriptions-page">
@@ -162,7 +229,7 @@ export default function SubscriptionsPage() {
           <button
             type="button"
             className="subscriptions-btn subscriptions-btn--primary"
-            onClick={() => router.push("/subscriptions/new")}
+            onClick={goCreateTier}
           >
             <Plus size={18} strokeWidth={2.25} />
             Create New Tier
@@ -170,7 +237,11 @@ export default function SubscriptionsPage() {
         </div>
       </div>
 
-      {fetchError ? (
+      {activeCategory === "addon" && addonFetchError ? (
+        <div className="subscriptions-fetch-error" role="alert">
+          {addonFetchError}
+        </div>
+      ) : activeCategory !== "addon" && fetchError ? (
         <div className="subscriptions-fetch-error" role="alert">
           {fetchError}
         </div>
@@ -212,7 +283,148 @@ export default function SubscriptionsPage() {
       </div>
 
       <div className="plans-grid">
-        {loading ? (
+        {activeCategory === "addon" ? (
+          addonLoading ? (
+            <div className="subscriptions-loading">
+              <Loader2 className="subscriptions-loading__spin" size={34} />
+              <span>Loading add-on services…</span>
+            </div>
+          ) : addons.length === 0 ? (
+            <div className="subscriptions-empty">
+              <p>No add-on services yet.</p>
+              <button
+                type="button"
+                className="subscriptions-btn subscriptions-btn--primary"
+                onClick={goCreateTier}
+              >
+                Create New Tier
+              </button>
+            </div>
+          ) : (
+            addons.map((addon) => (
+              <article
+                key={addon.id}
+                className={`plan-card ${addon.badge || addon.is_featured ? "plan-card--featured" : ""} ${!addon.is_active ? "plan-card--inactive" : ""}`}
+              >
+                {addon.badge ? (
+                  <div className="plan-card__pin">
+                    <Zap size={11} strokeWidth={2.5} />
+                    {addon.badge}
+                  </div>
+                ) : addon.is_featured ? (
+                  <div className="plan-card__pin">
+                    <Zap size={11} strokeWidth={2.5} />
+                    Featured
+                  </div>
+                ) : null}
+
+                <div className="plan-card__top">
+                  <h3 className="plan-card__name">{addon.name}</h3>
+                  {!addon.is_active ? (
+                    <div className="plan-card__status plan-card__status--off">
+                      Inactive add-on
+                    </div>
+                  ) : null}
+                  {addon.description ? (
+                    <p
+                      style={{
+                        margin: "0 0 10px",
+                        fontSize: 13,
+                        color: "var(--muted-foreground, #5c6670)",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {addon.description}
+                    </p>
+                  ) : null}
+                  <div className="price-durations-list">
+                    <div className="price-item">
+                      <div className="price-item__dur">
+                        <Clock
+                          size={13}
+                          strokeWidth={2}
+                          className="price-item__clock"
+                        />
+                        <span className="duration-text">List (mo)</span>
+                      </div>
+                      <span className="price-amount">
+                        ₹{addon.monthly_price.toLocaleString("en-IN")}
+                      </span>
+                    </div>
+                    <div className="price-item">
+                      <div className="price-item__dur">
+                        <Clock
+                          size={13}
+                          strokeWidth={2}
+                          className="price-item__clock"
+                        />
+                        <span className="duration-text">Offer</span>
+                      </div>
+                      <span className="price-amount">
+                        ₹{addon.offer_price.toLocaleString("en-IN")}
+                      </span>
+                    </div>
+                  </div>
+                  {addon.icon ? (
+                    <dl className="plan-card__meta">
+                      <dt>Icon</dt>
+                      <dd>{addon.icon}</dd>
+                    </dl>
+                  ) : null}
+                </div>
+
+                <div className="plan-features-section">
+                  <span className="feature-title">What&apos;s included</span>
+                  <ul className="feature-list">
+                    {addon.features.length === 0 ? (
+                      <li className="price-item--muted" style={{ listStyle: "none" }}>
+                        No features listed
+                      </li>
+                    ) : (
+                      addon.features.map((f, i) => (
+                        <li key={i}>
+                          <span className="feature-list__check" aria-hidden>
+                            <Check size={13} strokeWidth={2.75} />
+                          </span>
+                          {f}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </div>
+
+                <div className="plan-actions">
+                  <button
+                    type="button"
+                    className="plan-actions__edit"
+                    onClick={() =>
+                      router.push(
+                        `/subscriptions/details?id=${addon.id}&kind=addon`,
+                      )
+                    }
+                  >
+                    <Edit2 size={16} strokeWidth={2} />
+                    Edit add-on
+                  </button>
+                  <button
+                    type="button"
+                    className="plan-actions__delete"
+                    title="Remove add-on"
+                    aria-label="Remove add-on"
+                    disabled={deletingAddonId === addon.id}
+                    onClick={() => handleDeleteAddon(addon.id)}
+                  >
+                    {deletingAddonId === addon.id ? (
+                      <Loader2 size={17} strokeWidth={2} className="subscriptions-loading__spin" />
+                    ) : (
+                      <Trash2 size={17} strokeWidth={2} />
+                    )}
+                  </button>
+                </div>
+              </article>
+            ))
+          )
+        ) : loading ? (
           <div className="subscriptions-loading">
             <Loader2 className="subscriptions-loading__spin" size={34} />
             <span>Loading tiers…</span>
@@ -223,7 +435,7 @@ export default function SubscriptionsPage() {
             <button
               type="button"
               className="subscriptions-btn subscriptions-btn--primary"
-              onClick={() => router.push("/subscriptions/new")}
+              onClick={goCreateTier}
             >
               Create New Tier
             </button>

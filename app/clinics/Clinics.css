@@ -484,6 +484,37 @@ textarea.form-input {
   max-width: 600px;
 }
 
+/**
+ * Create-clinic modal: body + footer live inside <form>. Without this, the form
+ * grows past max-height and overflow:hidden clips the footer (no visible buttons).
+ */
+.modal-content form.clinic-create-modal-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.modal-content form.clinic-create-modal-form .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-content form.clinic-create-modal-form .modal-footer {
+  flex-shrink: 0;
+}
+
+/* Short viewports: scroll the overlay so the modal (and footer) can be reached */
+.modal-overlay.clinic-create-modal-overlay {
+  align-items: flex-start;
+  overflow-y: auto;
+  padding-top: max(16px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+}
+
 @keyframes clinics-modal-in {
   from {
     opacity: 0;
