@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Users, 
@@ -23,12 +23,12 @@ import {
   ArrowLeft,
   Briefcase,
   Layers,
-  Map,
   Compass,
   CheckCircle2,
   Settings,
   Phone,
   Store,
+  ChevronDown,
 } from 'lucide-react';
 import { api } from '@/utils/api';
 import {
@@ -39,6 +39,26 @@ import {
 } from '@/utils/locations';
 import '../dashboard/Dashboard.css';
 import './Staff.css';
+
+async function fetchCitiesMergedForStateCodes(
+  codes: string[],
+): Promise<IndianCity[]> {
+  if (codes.length === 0) return [];
+  const lists = await Promise.all(
+    codes.map((code) =>
+      fetchCitiesByStateCode(code).catch(() => [] as IndianCity[]),
+    ),
+  );
+  const byId = new Map<number, IndianCity>();
+  for (const list of lists) {
+    for (const c of list) {
+      if (!byId.has(c.id)) byId.set(c.id, c);
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+}
 
 interface AdminUser {
   id: number;
@@ -251,6 +271,8 @@ type FranchiseFormState = {
   pan_number: string;
   commission_percentage: string;
   description: string;
+  /** Comma-separated backend district IDs for bulk assign (state-level franchises) */
+  bulk_district_ids: string;
 };
 
 const initialFranchiseForm = (): FranchiseFormState => ({
@@ -271,7 +293,49 @@ const initialFranchiseForm = (): FranchiseFormState => ({
   pan_number: "",
   commission_percentage: "10",
   description: "",
+  bulk_district_ids: "",
 });
+
+function parseCommaSeparatedPositiveInts(raw: string): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const part of raw.split(/[,;\s]+/)) {
+    const t = part.trim();
+    if (!t) continue;
+    const n = Number(t);
+    if (Number.isFinite(n) && n > 0 && !seen.has(n)) {
+      seen.add(n);
+      out.push(Math.trunc(n));
+    }
+  }
+  return out;
+}
+
+function franchiseIdFromCreateResponse(payload: unknown): number | null {
+  if (!payload || typeof payload !== "object") return null;
+  const r = payload as Record<string, unknown>;
+  const tryId = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return null;
+  };
+  const id = tryId(r.id);
+  if (id != null) return id;
+  const data = r.data;
+  if (data && typeof data === "object") {
+    const id2 = tryId((data as Record<string, unknown>).id);
+    if (id2 != null) return id2;
+  }
+  const franchise = r.franchise;
+  if (franchise && typeof franchise === "object") {
+    const id3 = tryId((franchise as Record<string, unknown>).id);
+    if (id3 != null) return id3;
+  }
+  return null;
+}
 
 function buildCreateFranchisePayload(
   form: FranchiseFormState,
@@ -295,7 +359,7 @@ function buildCreateFranchisePayload(
     district_id:
       level === "district" && Number.isFinite(districtNum) ? districtNum : null,
     city_id:
-      level === "city" &&
+      (level === "city" || level === "district") &&
       selectedCityId != null &&
       Number.isFinite(selectedCityId)
         ? selectedCityId
@@ -451,12 +515,21 @@ export default function StaffPage() {
   const [franchiseLocationsError, setFranchiseLocationsError] = useState<
     string | null
   >(null);
-  const [franchiseStateCode, setFranchiseStateCode] = useState("");
+  const [franchiseSelectedStateCodes, setFranchiseSelectedStateCodes] =
+    useState<string[]>([]);
+  const [franchiseStateDropdownOpen, setFranchiseStateDropdownOpen] =
+    useState(false);
+  const franchiseStateDropdownRef = useRef<HTMLDivElement>(null);
   const [franchiseCitiesList, setFranchiseCitiesList] = useState<IndianCity[]>(
     [],
   );
   const [franchiseCitiesLoading, setFranchiseCitiesLoading] = useState(false);
-  const [franchiseCityId, setFranchiseCityId] = useState<number | null>(null);
+  const [franchiseSelectedCityIds, setFranchiseSelectedCityIds] = useState<
+    number[]
+  >([]);
+  const [franchiseCityDropdownOpen, setFranchiseCityDropdownOpen] =
+    useState(false);
+  const franchiseCityDropdownRef = useRef<HTMLDivElement>(null);
 
   const togglePermission = (key: keyof CreateStaffPermissions) => {
     setFormData(prev => ({
@@ -674,27 +747,27 @@ export default function StaffPage() {
   }, [showFranchiseForm]);
 
   useEffect(() => {
-    if (!showFranchiseForm || !franchiseStateCode) {
+    if (!showFranchiseForm || franchiseSelectedStateCodes.length === 0) {
       setFranchiseCitiesList([]);
-      setFranchiseCityId(null);
+      setFranchiseSelectedCityIds([]);
       return;
     }
 
     let cancelled = false;
     setFranchiseCitiesLoading(true);
-    void fetchCitiesByStateCode(franchiseStateCode)
+    void fetchCitiesMergedForStateCodes(franchiseSelectedStateCodes)
       .then((list) => {
         if (cancelled) return;
         setFranchiseCitiesList(list);
-        setFranchiseCityId((prev) => {
-          if (prev == null) return null;
-          return list.some((c) => c.id === prev) ? prev : null;
-        });
+        const idSet = new Set(list.map((c) => c.id));
+        setFranchiseSelectedCityIds((prev) =>
+          prev.filter((id) => idSet.has(id)),
+        );
       })
       .catch(() => {
         if (!cancelled) {
           setFranchiseCitiesList([]);
-          setFranchiseCityId(null);
+          setFranchiseSelectedCityIds([]);
         }
       })
       .finally(() => {
@@ -703,7 +776,50 @@ export default function StaffPage() {
     return () => {
       cancelled = true;
     };
-  }, [showFranchiseForm, franchiseStateCode]);
+  }, [showFranchiseForm, franchiseSelectedStateCodes]);
+
+  useEffect(() => {
+    if (!showFranchiseForm) {
+      setFranchiseStateDropdownOpen(false);
+      setFranchiseCityDropdownOpen(false);
+    }
+  }, [showFranchiseForm]);
+
+  useEffect(() => {
+    if (!franchiseStateDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = franchiseStateDropdownRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setFranchiseStateDropdownOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFranchiseStateDropdownOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [franchiseStateDropdownOpen]);
+
+  useEffect(() => {
+    if (!franchiseCityDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = franchiseCityDropdownRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setFranchiseCityDropdownOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFranchiseCityDropdownOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [franchiseCityDropdownOpen]);
 
   const handleRegisterUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -745,7 +861,13 @@ export default function StaffPage() {
 
   const handleCreateFranchise = async (e: React.FormEvent) => {
     e.preventDefault();
-    const st = franchiseLocationStates.find((s) => s.code === franchiseStateCode);
+    if (franchiseSelectedStateCodes.length === 0) {
+      alert("Select at least one state.");
+      return;
+    }
+
+    const primaryCode = franchiseSelectedStateCodes[0];
+    const st = franchiseLocationStates.find((s) => s.code === primaryCode);
     const fromApi = st?.id;
     const manual = franchiseForm.state_id_manual.trim();
     const resolvedStateId =
@@ -757,10 +879,13 @@ export default function StaffPage() {
 
     if (!Number.isFinite(resolvedStateId)) {
       alert(
-        "Select a state. If states from the API have no numeric ID, enter the state ID in the field provided.",
+        "The first state in the list (among your selections) needs a numeric ID. Enter it below if the API did not provide one.",
       );
       return;
     }
+
+    const primaryCityId =
+      franchiseSelectedCityIds.length > 0 ? franchiseSelectedCityIds[0] : null;
 
     if (franchiseForm.level === "district") {
       const d = Number(franchiseForm.district_id.replace(/\s/g, ""));
@@ -768,11 +893,19 @@ export default function StaffPage() {
         alert("District level requires a valid numeric district ID.");
         return;
       }
+      if (primaryCityId == null || !Number.isFinite(primaryCityId)) {
+        alert(
+          "District level requires at least one city (first selected is used as primary city).",
+        );
+        return;
+      }
     }
 
     if (franchiseForm.level === "city") {
-      if (franchiseCityId == null || !Number.isFinite(franchiseCityId)) {
-        alert("City level requires a state and a selected city.");
+      if (primaryCityId == null || !Number.isFinite(primaryCityId)) {
+        alert(
+          "City level requires at least one state and at least one selected city.",
+        );
         return;
       }
     }
@@ -782,15 +915,52 @@ export default function StaffPage() {
       const payload = buildCreateFranchisePayload(
         franchiseForm,
         resolvedStateId,
-        franchiseCityId,
+        primaryCityId,
       );
-      await api.post("/api/v1/super-admin/franchises/franchises", payload);
-      alert("Franchise created successfully.");
+      const created = await api.post<Record<string, unknown>>(
+        "/api/v1/super-admin/franchises/franchises",
+        payload,
+      );
+      const newFranchiseId = franchiseIdFromCreateResponse(created);
+
+      const bulkDistricts =
+        franchiseForm.level === "state"
+          ? parseCommaSeparatedPositiveInts(franchiseForm.bulk_district_ids)
+          : [];
+      const bulkCities =
+        franchiseForm.level === "district" || franchiseForm.level === "city"
+          ? [...franchiseSelectedCityIds]
+          : [];
+
+      let bulkMessage: string | null = null;
+      if (bulkDistricts.length > 0 || bulkCities.length > 0) {
+        if (newFranchiseId == null) {
+          bulkMessage =
+            "Franchise was created but the response had no franchise id, so bulk territories were not assigned.";
+        } else {
+          try {
+            await api.post(
+              `/api/v1/super-admin/territories/franchises/${newFranchiseId}/territories/bulk`,
+              { districts: bulkDistricts, cities: bulkCities },
+            );
+          } catch (bulkErr: unknown) {
+            bulkMessage =
+              bulkErr instanceof Error
+                ? `Franchise created, but bulk territories failed: ${bulkErr.message}`
+                : "Franchise created, but bulk territories failed.";
+          }
+        }
+      }
+
+      alert(
+        bulkMessage ??
+          "Franchise created successfully.",
+      );
       setShowFranchiseForm(false);
       setFranchiseForm(initialFranchiseForm());
-      setFranchiseStateCode("");
+      setFranchiseSelectedStateCodes([]);
       setFranchiseCitiesList([]);
-      setFranchiseCityId(null);
+      setFranchiseSelectedCityIds([]);
       void fetchUsers();
       void fetchFranchises();
       setHierarchyTab("franchises");
@@ -803,13 +973,17 @@ export default function StaffPage() {
     }
   };
 
-  const franchiseSelectedState = franchiseLocationStates.find(
-    (s) => s.code === franchiseStateCode,
-  );
+  const franchisePrimaryCode =
+    franchiseSelectedStateCodes.length > 0
+      ? franchiseSelectedStateCodes[0]
+      : "";
+  const franchisePrimarySelectedState = franchisePrimaryCode
+    ? franchiseLocationStates.find((s) => s.code === franchisePrimaryCode)
+    : undefined;
   const franchiseStateNeedsManualId =
-    Boolean(franchiseStateCode) &&
-    (franchiseSelectedState == null ||
-      franchiseSelectedState.id === undefined);
+    franchiseSelectedStateCodes.length > 0 &&
+    (franchisePrimarySelectedState == null ||
+      franchisePrimarySelectedState.id === undefined);
 
   return (
     <div className="page-container staff-page">
@@ -850,9 +1024,9 @@ export default function StaffPage() {
             className="btn btn-primary staff-page-header-action"
             onClick={() => {
               setFranchiseForm(initialFranchiseForm());
-              setFranchiseStateCode("");
+              setFranchiseSelectedStateCodes([]);
               setFranchiseCitiesList([]);
-              setFranchiseCityId(null);
+              setFranchiseSelectedCityIds([]);
               setFranchiseLocationsError(null);
               setShowFranchiseForm(true);
             }}
@@ -1813,8 +1987,9 @@ export default function StaffPage() {
                           ...prev,
                           level,
                           ...(level !== "district" ? { district_id: "" } : {}),
+                          ...(level !== "state" ? { bulk_district_ids: "" } : {}),
                         }));
-                        if (level !== "city") setFranchiseCityId(null);
+                        if (level === "state") setFranchiseSelectedCityIds([]);
                       }}
                       required
                     >
@@ -1825,7 +2000,7 @@ export default function StaffPage() {
                   </div>
                   <div className="form-group">
                     <label
-                      htmlFor="franchise-state"
+                      id="franchise-state-label"
                       style={{
                         display: "block",
                         marginBottom: 8,
@@ -1834,7 +2009,7 @@ export default function StaffPage() {
                         color: "#475569",
                       }}
                     >
-                      State
+                      State(s)
                     </label>
                     {franchiseLocationsLoading ? (
                       <div
@@ -1854,28 +2029,199 @@ export default function StaffPage() {
                         {franchiseLocationsError}
                       </p>
                     ) : (
-                      <select
-                        id="franchise-state"
-                        className="form-input staff-form-select"
-                        value={franchiseStateCode}
-                        onChange={(e) => {
-                          const code = e.target.value;
-                          setFranchiseStateCode(code);
-                          setFranchiseCityId(null);
-                          setFranchiseForm((prev) => ({
-                            ...prev,
-                            state_id_manual: "",
-                          }));
-                        }}
-                        required
+                      <div
+                        ref={franchiseStateDropdownRef}
+                        style={{ position: "relative", width: "100%" }}
                       >
-                        <option value="">Select state</option>
-                        {franchiseLocationStates.map((s) => (
-                          <option key={s.code} value={s.code}>
-                            {s.name} ({s.code})
-                          </option>
-                        ))}
-                      </select>
+                        <button
+                          type="button"
+                          id="franchise-state-trigger"
+                          className="form-input staff-form-select"
+                          aria-haspopup="listbox"
+                          aria-expanded={franchiseStateDropdownOpen}
+                          aria-labelledby="franchise-state-label franchise-state-trigger"
+                          onClick={() =>
+                            setFranchiseStateDropdownOpen((o) => !o)
+                          }
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            textAlign: "left",
+                            cursor: "pointer",
+                            background: "#fff",
+                          }}
+                        >
+                          <span
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              fontSize: 14,
+                              color:
+                                franchiseSelectedStateCodes.length === 0
+                                  ? "#94a3b8"
+                                  : "#334155",
+                            }}
+                          >
+                            {franchiseSelectedStateCodes.length === 0
+                              ? "Select state(s)"
+                              : franchiseSelectedStateCodes.length === 1
+                                ? (() => {
+                                    const st =
+                                      franchiseLocationStates.find(
+                                        (x) =>
+                                          x.code ===
+                                          franchiseSelectedStateCodes[0],
+                                      );
+                                    return st
+                                      ? `${st.name} (${st.code})`
+                                      : franchiseSelectedStateCodes[0];
+                                  })()
+                                : `${franchiseSelectedStateCodes.length} states selected`}
+                          </span>
+                          <ChevronDown
+                            size={18}
+                            aria-hidden
+                            style={{
+                              flexShrink: 0,
+                              color: "#64748b",
+                              transform: franchiseStateDropdownOpen
+                                ? "rotate(180deg)"
+                                : undefined,
+                              transition: "transform 0.15s ease",
+                            }}
+                          />
+                        </button>
+                        {franchiseStateDropdownOpen && (
+                          <div
+                            role="listbox"
+                            aria-multiselectable
+                            style={{
+                              position: "absolute",
+                              left: 0,
+                              right: 0,
+                              top: "calc(100% + 4px)",
+                              zIndex: 50,
+                              border: "1px solid #cbd5e1",
+                              borderRadius: 8,
+                              padding: "8px 10px",
+                              maxHeight: 220,
+                              overflowY: "auto",
+                              background: "#fff",
+                              boxShadow:
+                                "0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.08)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "flex-end",
+                                marginBottom: 6,
+                                gap: 8,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{
+                                  fontSize: 12,
+                                  padding: "4px 10px",
+                                }}
+                                onClick={() => {
+                                  const all = franchiseLocationStates.map(
+                                    (s) => s.code,
+                                  );
+                                  const allSelected =
+                                    franchiseSelectedStateCodes.length ===
+                                      all.length && all.length > 0;
+                                  setFranchiseSelectedStateCodes(
+                                    allSelected ? [] : all,
+                                  );
+                                  setFranchiseSelectedCityIds([]);
+                                  setFranchiseForm((prev) => ({
+                                    ...prev,
+                                    state_id_manual: "",
+                                  }));
+                                  setFranchiseStateDropdownOpen(false);
+                                }}
+                              >
+                                {franchiseSelectedStateCodes.length > 0 &&
+                                franchiseSelectedStateCodes.length ===
+                                  franchiseLocationStates.length
+                                  ? "Clear all"
+                                  : "Select all"}
+                              </button>
+                            </div>
+                            <p
+                              style={{
+                                margin: "0 0 8px",
+                                fontSize: 11,
+                                color: "#64748b",
+                                lineHeight: 1.35,
+                              }}
+                            >
+                              First selected state in list order sets{" "}
+                              <code style={{ fontSize: 11 }}>state_id</code>.
+                            </p>
+                            {franchiseLocationStates.map((s) => {
+                              const checked =
+                                franchiseSelectedStateCodes.includes(s.code);
+                              return (
+                                <label
+                                  key={s.code}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "4px 2px",
+                                    cursor: "pointer",
+                                    fontSize: 13,
+                                    color: "#334155",
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setFranchiseSelectedStateCodes(
+                                        (prev) => {
+                                          const order =
+                                            franchiseLocationStates.map(
+                                              (x) => x.code,
+                                            );
+                                          const set = new Set(prev);
+                                          if (set.has(s.code)) {
+                                            set.delete(s.code);
+                                          } else {
+                                            set.add(s.code);
+                                          }
+                                          return order.filter((c) =>
+                                            set.has(c),
+                                          );
+                                        },
+                                      );
+                                      setFranchiseSelectedCityIds([]);
+                                      setFranchiseForm((p) => ({
+                                        ...p,
+                                        state_id_manual: "",
+                                      }));
+                                      setFranchiseStateDropdownOpen(false);
+                                    }}
+                                  />
+                                  <span>
+                                    {s.name} ({s.code})
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1910,6 +2256,49 @@ export default function StaffPage() {
                   </div>
                 )}
 
+                {franchiseForm.level === "state" && (
+                  <div className="form-group">
+                    <label
+                      htmlFor="franchise-bulk-districts"
+                      style={{
+                        display: "block",
+                        marginBottom: 8,
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: "#475569",
+                      }}
+                    >
+                      District IDs (bulk assign)
+                    </label>
+                    <textarea
+                      id="franchise-bulk-districts"
+                      className="form-input"
+                      rows={2}
+                      value={franchiseForm.bulk_district_ids}
+                      onChange={(e) =>
+                        setFranchiseForm((p) => ({
+                          ...p,
+                          bulk_district_ids: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. 12, 34, 56"
+                      style={{ resize: "vertical", minHeight: 56 }}
+                    />
+                    <p
+                      style={{
+                        margin: "6px 0 0",
+                        fontSize: 11,
+                        color: "#64748b",
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      Comma-separated backend district IDs. Sent to bulk
+                      territories after the franchise is created. Leave empty to
+                      skip bulk assign.
+                    </p>
+                  </div>
+                )}
+
                 {franchiseForm.level === "district" && (
                   <div className="form-group">
                     <label
@@ -1940,10 +2329,11 @@ export default function StaffPage() {
                   </div>
                 )}
 
-                {franchiseForm.level === "city" && (
+                {(franchiseForm.level === "city" ||
+                  franchiseForm.level === "district") && (
                   <div className="form-group">
                     <label
-                      htmlFor="franchise-city"
+                      id="franchise-city-label"
                       style={{
                         display: "block",
                         marginBottom: 8,
@@ -1952,16 +2342,18 @@ export default function StaffPage() {
                         color: "#475569",
                       }}
                     >
-                      City
+                      {franchiseForm.level === "district"
+                        ? "Cities (bulk assign)"
+                        : "Cities"}
                     </label>
-                    {!franchiseStateCode ? (
+                    {franchiseSelectedStateCodes.length === 0 ? (
                       <select
                         id="franchise-city"
                         className="form-input staff-form-select"
                         disabled
                         value=""
                       >
-                        <option value="">Select a state first</option>
+                        <option value="">Select state(s) first</option>
                       </select>
                     ) : franchiseCitiesLoading ? (
                       <div
@@ -1983,28 +2375,185 @@ export default function StaffPage() {
                         disabled
                         value=""
                       >
-                        <option value="">No cities for this state</option>
+                        <option value="">No cities for selected state(s)</option>
                       </select>
                     ) : (
-                      <select
-                        id="franchise-city"
-                        className="form-input staff-form-select"
-                        value={franchiseCityId ?? ""}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setFranchiseCityId(
-                            v === "" ? null : Number(v),
-                          );
-                        }}
-                        required
+                      <div
+                        ref={franchiseCityDropdownRef}
+                        style={{ position: "relative", width: "100%" }}
                       >
-                        <option value="">Select city</option>
-                        {franchiseCitiesList.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
+                        <button
+                          type="button"
+                          id="franchise-city-trigger"
+                          className="form-input staff-form-select"
+                          aria-haspopup="listbox"
+                          aria-expanded={franchiseCityDropdownOpen}
+                          aria-labelledby="franchise-city-label franchise-city-trigger"
+                          onClick={() =>
+                            setFranchiseCityDropdownOpen((o) => !o)
+                          }
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            textAlign: "left",
+                            cursor: "pointer",
+                            background: "#fff",
+                          }}
+                        >
+                          <span
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              fontSize: 14,
+                              color:
+                                franchiseSelectedCityIds.length === 0
+                                  ? "#94a3b8"
+                                  : "#334155",
+                            }}
+                          >
+                            {franchiseSelectedCityIds.length === 0
+                              ? "Select city / cities"
+                              : franchiseSelectedCityIds.length === 1
+                                ? (() => {
+                                    const c = franchiseCitiesList.find(
+                                      (x) =>
+                                        x.id === franchiseSelectedCityIds[0],
+                                    );
+                                    return c
+                                      ? c.name
+                                      : String(franchiseSelectedCityIds[0]);
+                                  })()
+                                : `${franchiseSelectedCityIds.length} cities selected`}
+                          </span>
+                          <ChevronDown
+                            size={18}
+                            aria-hidden
+                            style={{
+                              flexShrink: 0,
+                              color: "#64748b",
+                              transform: franchiseCityDropdownOpen
+                                ? "rotate(180deg)"
+                                : undefined,
+                              transition: "transform 0.15s ease",
+                            }}
+                          />
+                        </button>
+                        {franchiseCityDropdownOpen && (
+                          <div
+                            role="listbox"
+                            aria-multiselectable
+                            style={{
+                              position: "absolute",
+                              left: 0,
+                              right: 0,
+                              top: "calc(100% + 4px)",
+                              zIndex: 50,
+                              border: "1px solid #cbd5e1",
+                              borderRadius: 8,
+                              padding: "8px 10px",
+                              maxHeight: 220,
+                              overflowY: "auto",
+                              background: "#fff",
+                              boxShadow:
+                                "0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.08)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "flex-end",
+                                marginBottom: 6,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{
+                                  fontSize: 12,
+                                  padding: "4px 10px",
+                                }}
+                                onClick={() => {
+                                  const allIds = franchiseCitiesList.map(
+                                    (c) => c.id,
+                                  );
+                                  const allSelected =
+                                    franchiseSelectedCityIds.length ===
+                                      allIds.length && allIds.length > 0;
+                                  setFranchiseSelectedCityIds(
+                                    allSelected ? [] : allIds,
+                                  );
+                                  setFranchiseCityDropdownOpen(false);
+                                }}
+                              >
+                                {franchiseSelectedCityIds.length > 0 &&
+                                franchiseSelectedCityIds.length ===
+                                  franchiseCitiesList.length
+                                  ? "Clear all"
+                                  : "Select all"}
+                              </button>
+                            </div>
+                            <p
+                              style={{
+                                margin: "0 0 8px",
+                                fontSize: 11,
+                                color: "#64748b",
+                                lineHeight: 1.35,
+                              }}
+                            >
+                              First selected city is used as{" "}
+                              <code style={{ fontSize: 11 }}>city_id</code> on
+                              create; all selected are sent in bulk.
+                            </p>
+                            {franchiseCitiesList.map((c) => {
+                              const checked =
+                                franchiseSelectedCityIds.includes(c.id);
+                              return (
+                                <label
+                                  key={c.id}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "4px 2px",
+                                    cursor: "pointer",
+                                    fontSize: 13,
+                                    color: "#334155",
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setFranchiseSelectedCityIds((prev) => {
+                                        const order = franchiseCitiesList.map(
+                                          (x) => x.id,
+                                        );
+                                        const set = new Set(prev);
+                                        if (set.has(c.id)) {
+                                          set.delete(c.id);
+                                        } else {
+                                          set.add(c.id);
+                                        }
+                                        return order.filter((id) =>
+                                          set.has(id),
+                                        );
+                                      });
+                                      setFranchiseCityDropdownOpen(false);
+                                    }}
+                                  />
+                                  <span>{c.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
