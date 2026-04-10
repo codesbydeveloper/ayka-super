@@ -1,0 +1,192 @@
+.broadcast-page {
+  padding-bottom: 50px;
+}
+
+.card-header-simple {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 24px;
+}
+
+.card-heading {
+  font-size: 18px;
+  font-weight: 800;
+  color: #1e293b;
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.template-box {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.template-box:hover {
+  border-color: #cbd5e1;
+  background: white;
+}
+
+.template-box.active {
+  border-color: #2A4638;
+  background: #f5f3ff;
+  box-shadow: 0 0 0 1px #2A4638;
+}
+
+.template-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.template-desc {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.channel-grid {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.channel-card {
+  flex: 1;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.channel-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.channel-card.active {
+  border-color: #2A4638;
+  background: #f5f3ff;
+  color: #2A4638;
+}
+
+.chan-title {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.chan-status {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.audit-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.audit-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border-bottom: 1px solid #f1f5f9;
+  transition: all 0.2s;
+}
+
+.audit-item:hover {
+  background: #f8fafc;
+}
+
+.audit-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+}
+
+.audit-main {
+  flex: 1;
+}
+
+.audit-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.audit-subject {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.status-tag {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 50px;
+}
+
+.status-tag.delivered { background: #dcfce7; color: #166534; }
+.status-tag.processing { background: #fef9c3; color: #854d0e; }
+
+.audit-meta {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.platform-health-card {
+  margin-top: 24px;
+  padding: 20px;
+  background: #f0fdf4;
+  border: 1px solid #dcfce7;
+  border-radius: 16px;
+}
+
+.health-header {
+  display: flex;
+  gap: 16px;
+}
+
+.health-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: #166534;
+}
+
+.health-desc {
+  font-size: 12px;
+  color: #166534;
+  opacity: 0.8;
+}

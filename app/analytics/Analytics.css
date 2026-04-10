@@ -1,0 +1,143 @@
+.analytics-container {
+  padding: 32px;
+  animation: fadeIn 0.4s ease-out;
+}
+
+.log-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.log-entry {
+  background: white;
+  border-radius: 16px;
+  padding: 20px 24px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.log-entry:hover {
+  transform: translateX(8px);
+  border-color: var(--primary-light);
+  box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.1);
+}
+
+.log-icon-box {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.log-icon-box.create { background: #DCFCE7; color: #16A34A; }
+.log-icon-box.update { background: #DBEAFE; color: #2563EB; }
+.log-icon-box.delete { background: #FEE2E2; color: #DC2626; }
+.log-icon-box.view { background: #F1F5F9; color: #64748B; }
+
+.log-main {
+  flex: 1;
+}
+
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.log-action {
+  font-weight: 700;
+  color: #1E293B;
+  font-size: 15px;
+}
+
+.log-time {
+  font-size: 13px;
+  color: #94A3B8;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.log-details {
+  font-size: 14px;
+  color: #64748B;
+  line-height: 1.5;
+}
+
+.log-staff {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  background: #F8FAFC;
+  padding: 6px 12px;
+  border-radius: 8px;
+  width: fit-content;
+  color: #475569;
+  border: 1px solid #F1F5F9;
+}
+
+.log-staff-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--primary-light);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 10px;
+}
+
+.log-resource-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 12px;
+}
+
+.log-resource-tag.clinic { background: #E0E7FF; color: #2A4638; }
+.log-resource-tag.doctor { background: #FEF3C7; color: #92400E; }
+.log-resource-tag.patient { background: #D1FAE5; color: #065F46; }
+
+.analytics-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 40px;
+}
+
+.analytics-title-group h1 {
+  font-size: 32px;
+  font-weight: 900;
+  color: #0F172A;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+
+.analytics-title-group p {
+  color: #64748B;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}

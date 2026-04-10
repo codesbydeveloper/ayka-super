@@ -1,0 +1,697 @@
+/* Clinic Management — layout aligned with AYKA Central mock (card shell, filters, table, modals).
+   Relies on ../dashboard/Dashboard.css for .page-container, .btn, .card base tokens. */
+
+/* —— Forms (create / edit modals) —— */
+.clinics-page .form-group,
+.form-group {
+  margin-bottom: 18px;
+}
+
+.clinics-page .form-group:last-child,
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main, #111827);
+  margin-bottom: 8px;
+}
+
+.form-input,
+.select-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-main, #111827);
+  background: #ffffff;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+select.form-input,
+select.select-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 40px;
+  cursor: pointer;
+}
+
+.form-input:focus,
+.select-input:focus {
+  border-color: var(--primary, #166534);
+  box-shadow: 0 0 0 3px rgba(22, 101, 52, 0.12);
+}
+
+textarea.form-input {
+  min-height: 96px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* —— Main table card —— */
+.table-card {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--border, #e5e7eb);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.table-card .table-pagination {
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+
+.table-filters {
+  padding: 20px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background-color: #ffffff;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #f9fafb;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 320px;
+  min-width: 200px;
+  color: var(--text-muted, #64748b);
+}
+
+.search-box input {
+  border: none;
+  background: transparent;
+  width: 100%;
+  outline: none;
+  font-size: 14px;
+  color: var(--text-main, #111827);
+}
+
+.search-box input::placeholder {
+  color: #94a3b8;
+}
+
+.filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-group .form-input,
+.filter-group .select-input {
+  width: auto;
+  min-width: 160px;
+  max-width: 200px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main, #374151);
+  background: #ffffff;
+}
+
+.filter-group .btn {
+  white-space: nowrap;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.filter-group .btn-secondary {
+  background: #ffffff;
+  color: var(--text-main, #374151);
+  border: 1px solid var(--border, #e5e7eb);
+}
+
+.filter-group .btn-secondary:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.filter-group .btn-primary {
+  box-shadow: 0 1px 2px rgba(22, 101, 52, 0.15);
+}
+
+/* —— Table —— */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th {
+  padding: 14px 24px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background-color: #f9fafb;
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 16px 24px;
+  font-size: 14px;
+  color: var(--text-main, #111827);
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr:hover {
+  background-color: #fafafa;
+}
+
+.clinic-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-main, #111827);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.clinic-name-cell:hover span {
+  color: var(--primary, #166534);
+  text-decoration: underline;
+}
+
+.clinic-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--primary-grey, #f1f4f2);
+  color: var(--primary, #166534);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.plan-tag {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.table-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.menu-cell {
+  position: relative;
+}
+
+.row-actions-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 140px;
+  border: 1px solid var(--border, #e5e7eb);
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
+  z-index: 30;
+  padding: 6px;
+}
+
+.row-action-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  text-decoration: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.row-action-item:hover {
+  background: #f8fafc;
+  color: var(--primary, #166534);
+}
+
+.row-action-item.danger:hover {
+  color: var(--danger, #dc2626);
+  background: #fef2f2;
+}
+
+.action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  border: 1px solid transparent;
+  background: transparent;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.action-btn:hover {
+  background-color: #f1f5f9;
+  color: var(--primary, #166534);
+  border-color: #e2e8f0;
+}
+
+.danger-btn:hover {
+  color: var(--danger, #dc2626);
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.table-pagination {
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  background-color: #ffffff;
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: var(--text-muted, #64748b);
+}
+
+.pagination-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.pagination-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  border: 1px solid var(--border, #e5e7eb);
+  background: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.pagination-btn.active {
+  background-color: var(--primary, #166534);
+  color: #fff;
+  border-color: var(--primary, #166534);
+}
+
+.pagination-btn:hover:not(.active):not(.disabled) {
+  background-color: #f9fafb;
+}
+
+.pagination-btn.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.loading-state,
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-muted, #64748b);
+}
+
+.loading-state p,
+.empty-state p {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.error-alert-box {
+  margin: 16px 24px;
+  padding: 12px 16px;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.retry-btn {
+  margin-left: auto;
+  background: #fff;
+  border: 1px solid #fecaca;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #b91c1c;
+}
+
+.retry-btn:hover {
+  background-color: #fef2f2;
+}
+
+.animate-spin {
+  animation: clinics-spin 0.85s linear infinite;
+  color: var(--primary, #166534);
+}
+
+@keyframes clinics-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Advanced location strip */
+.clinics-advanced-filter {
+  padding: 16px 24px;
+  background: #f9fafb;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+
+.animate-in {
+  animation: clinics-filter-in 0.2s ease-out;
+}
+
+@keyframes clinics-filter-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* —— Modals —— */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+  backdrop-filter: blur(6px);
+}
+
+.modal-content {
+  background: #ffffff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 480px;
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.2);
+  animation: clinics-modal-in 0.22s ease-out;
+}
+
+.modal-content.modal-content--wide {
+  max-width: 600px;
+}
+
+@keyframes clinics-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal-header {
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main, #111827);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.modal-close:hover {
+  background: #f1f5f9;
+  color: var(--text-main, #111827);
+}
+
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  padding: 16px 24px;
+  background: #f9fafb;
+  border-top: 1px solid var(--border, #e5e7eb);
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.modal-footer .btn {
+  min-height: 44px;
+  padding: 10px 20px;
+}
+
+.modal-footer .btn-primary {
+  background: var(--primary, #166534);
+  color: #fff;
+}
+
+.modal-footer .btn-primary:hover {
+  opacity: 0.95;
+}
+
+.modal-footer .btn-secondary {
+  background: #ffffff;
+  color: var(--text-main, #111827);
+  border: 1px solid var(--border, #e5e7eb);
+}
+
+.status-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding: 14px 16px;
+  background: #f9fafb;
+  border-radius: 10px;
+  border: 1px solid var(--border, #e5e7eb);
+}
+
+/* Root wrapper: optional class from page */
+.clinics-page .page-container {
+  padding-bottom: 32px;
+}
+
+/* Subscription renewal summary — same pattern as Expert Management */
+.clinics-page .subscription-summary-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 900px) {
+  .clinics-page .subscription-summary-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+.clinics-page .summary-card {
+  padding: 24px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid var(--border, #e5e7eb);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+  position: relative;
+  overflow: hidden;
+}
+
+.clinics-page .summary-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+}
+
+.clinics-page .summary-card.critical::after {
+  background: var(--danger, #dc2626);
+}
+
+.clinics-page .summary-card.warning::after {
+  background: #f59e0b;
+}
+
+.clinics-page .summary-card.approach::after {
+  background: #eab308;
+}
+
+.clinics-page .summary-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text-main, #111827);
+  margin-top: 4px;
+}
+
+.clinics-page .summary-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.clinics-page .summary-tag {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.clinics-page .summary-card.critical .summary-tag {
+  background: #fef2f2;
+  color: var(--danger, #dc2626);
+}
+
+.clinics-page .summary-card.warning .summary-tag {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.clinics-page .summary-card.approach .summary-tag {
+  background: #fefce8;
+  color: #854d0e;
+}
+
+@media (max-width: 768px) {
+  .clinics-page .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .clinics-page .header-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .clinics-page .header-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .clinics-page .summary-card {
+    padding: 18px;
+  }
+
+  .clinics-page .summary-value {
+    font-size: 22px;
+  }
+}

@@ -1,0 +1,201 @@
+.header {
+  height: var(--header-height);
+  min-height: var(--header-height);
+  padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0
+    max(16px, env(safe-area-inset-left, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  background-color: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 99;
+  min-width: 0;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.menuToggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.menuToggle:hover {
+  background: var(--background);
+}
+
+.searchContainer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: #F3F4F6;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  width: 100%;
+  max-width: 400px;
+  transition: all 0.2s ease;
+}
+
+.searchContainer:focus-within {
+  background-color: #FFFFFF;
+  box-shadow: 0 0 0 2px var(--primary-light), 0 0 0 1px var(--primary);
+}
+
+.searchInput {
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 14px;
+  width: 100%;
+  color: var(--text-main);
+}
+
+.rightSection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.iconButton {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.iconButton:hover {
+  background-color: var(--background);
+  color: var(--primary);
+}
+
+.notificationBadge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  background-color: var(--danger);
+  color: #FFFFFF;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--surface);
+}
+
+.divider {
+  width: 1px;
+  height: 24px;
+  background-color: var(--border);
+  margin: 0 8px;
+}
+
+.adminProfile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.adminProfile:hover {
+  background-color: var(--background);
+}
+
+.adminAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #F3F4F6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.adminInfo {
+  display: flex;
+  flex-direction: column;
+}
+
+.adminName {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+
+.adminEmail {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 1024px) {
+  .menuToggle {
+    display: flex;
+  }
+}
+
+@media (max-width: 768px) {
+  .searchContainer {
+    display: none;
+  }
+  .adminInfo, .profileChevron, .divider {
+    display: none;
+  }
+  .adminProfile {
+    padding: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .header {
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+
+  .headerLeft {
+    gap: 8px;
+  }
+
+  .rightSection {
+    gap: 4px;
+  }
+
+  .iconButton {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+  }
+
+  .menuToggle {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+  }
+}
