@@ -224,6 +224,9 @@ function FranchiseDetailsContent() {
   const [bulkDistrictIds, setBulkDistrictIds] = useState<number[]>([]);
   const [bulkCityIds, setBulkCityIds] = useState<number[]>([]);
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [removingTerritoryRowId, setRemovingTerritoryRowId] = useState<
+    number | null
+  >(null);
 
   const franchisePath = (fid: string) =>
     `/api/v1/super-admin/franchises/franchises/${encodeURIComponent(fid)}`;
@@ -240,6 +243,10 @@ function FranchiseDetailsContent() {
 
   const franchiseBulkTerritoriesPath = (fid: string) =>
     `/api/v1/super-admin/territories/franchises/${encodeURIComponent(fid)}/territories/bulk`;
+
+  /** DELETE …/territories/{territory_id} — soft-delete one assignment (path uses list row `territory_id`). */
+  const franchiseSingleTerritoryPath = (fid: string, territoryId: number) =>
+    `/api/v1/super-admin/territories/franchises/${encodeURIComponent(fid)}/territories/${encodeURIComponent(String(territoryId))}`;
 
   const effectiveStateId = useMemo(() => {
     if (!franchise) return undefined;
@@ -452,6 +459,36 @@ function FranchiseDetailsContent() {
       );
     } finally {
       setBulkSubmitting(false);
+    }
+  };
+
+  const handleRemoveSingleTerritory = async (t: FranchiseTerritoryRow) => {
+    if (!canEdit) return;
+    const fid = (id ?? "").trim();
+    if (!fid) return;
+    const pathTid = t.territory_id;
+    if (!Number.isFinite(pathTid) || pathTid <= 0) {
+      toast.error("Invalid territory id for this assignment.");
+      return;
+    }
+    const ok = await askConfirm({
+      title: "Remove territory assignment?",
+      message: `Remove “${t.territory_name}” from this franchise? This is a soft delete (kept for audit).`,
+      variant: "danger",
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
+    setRemovingTerritoryRowId(t.id);
+    try {
+      await api.delete(franchiseSingleTerritoryPath(fid, pathTid));
+      toast.success("Territory assignment removed.");
+      await fetchFranchiseTerritories();
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not remove territory.",
+      );
+    } finally {
+      setRemovingTerritoryRowId(null);
     }
   };
 
@@ -1378,6 +1415,19 @@ function FranchiseDetailsContent() {
                         >
                           Assigned at
                         </th>
+                        {canEdit ? (
+                          <th
+                            style={{
+                              padding: "8px 0 8px 12px",
+                              color: "#64748b",
+                              fontWeight: 700,
+                              textAlign: "right",
+                              width: 56,
+                            }}
+                          >
+                            Actions
+                          </th>
+                        ) : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -1412,6 +1462,40 @@ function FranchiseDetailsContent() {
                           >
                             {formatAssignedAt(t.assigned_at)}
                           </td>
+                          {canEdit ? (
+                            <td
+                              style={{
+                                padding: "10px 0 10px 12px",
+                                textAlign: "right",
+                                verticalAlign: "middle",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                title="Remove assignment (soft delete)"
+                                aria-label={`Remove ${t.territory_name}`}
+                                className="btn btn-secondary staff-card-icon-btn-danger"
+                                style={{
+                                  padding: "8px 10px",
+                                  borderColor: "#fecaca",
+                                  minWidth: 40,
+                                }}
+                                disabled={
+                                  removingTerritoryRowId !== null ||
+                                  saving ||
+                                  deleting ||
+                                  bulkSubmitting
+                                }
+                                onClick={() => void handleRemoveSingleTerritory(t)}
+                              >
+                                {removingTerritoryRowId === t.id ? (
+                                  <Loader2 className="animate-spin" size={16} />
+                                ) : (
+                                  <Trash2 size={16} />
+                                )}
+                              </button>
+                            </td>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
