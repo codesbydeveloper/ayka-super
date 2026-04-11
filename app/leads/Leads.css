@@ -119,6 +119,68 @@
     color: #111827 !important;
   }
   
+  .leads-page .form-group {
+    margin-bottom: 18px;
+  }
+
+  .leads-page .form-group:last-child {
+    margin-bottom: 0;
+  }
+
+  .leads-page .form-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main, #111827);
+    margin-bottom: 8px;
+  }
+
+  .leads-page .form-input,
+  .leads-page textarea.form-input {
+    width: 100%;
+    max-width: 100%;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--text-main, #111827);
+    background: #ffffff;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    box-sizing: border-box;
+  }
+
+  .leads-page select.form-input {
+    appearance: none;
+    background-color: #ffffff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 40px;
+    cursor: pointer;
+  }
+
+  .leads-page .form-input:focus,
+  .leads-page textarea.form-input:focus,
+  .leads-page select.form-input:focus {
+    border-color: var(--primary, #2a4638);
+    box-shadow: 0 0 0 3px rgba(42, 70, 56, 0.12);
+  }
+
+  .leads-page textarea.form-input {
+    min-height: 96px;
+    resize: vertical;
+    font-family: inherit;
+  }
+
+  .leads-page .section-hint {
+    font-size: 13px;
+    line-height: 1.45;
+    color: #64748b;
+    margin: 0;
+  }
+  
   /* ===== STAT CARDS ===== */
   .leads-stats {
     display: grid;

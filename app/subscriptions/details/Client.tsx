@@ -14,6 +14,7 @@ import {
   Database,
   Trash2,
   Globe,
+  Power,
 } from "lucide-react";
 import { api } from "@/utils/api";
 import { useToast } from "@/components/ToastProvider";
@@ -513,6 +514,7 @@ function PlanDetailsView({ planId }: { planId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [activating, setActivating] = useState(false);
   const [plan, setPlan] = useState({
     name: "",
     monthly: 0,
@@ -592,6 +594,25 @@ function PlanDetailsView({ planId }: { planId: string }) {
     }
   };
 
+  const handleActivatePlan = async () => {
+    setActivating(true);
+    try {
+      const result = await api.put<{ success?: boolean; message?: string }>(
+        `/api/v1/super-admin/subscription/plans/${planId}`,
+        { is_active: true },
+      );
+      if (result.success === false) {
+        alert(result.message || "Could not activate plan.");
+        return;
+      }
+      setPlan((p) => ({ ...p, is_active: true }));
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Could not activate plan.");
+    } finally {
+      setActivating(false);
+    }
+  };
+
   const handleDelete = async () => {
     const ok = await askConfirm({
       title: "Delete subscription tier?",
@@ -662,6 +683,59 @@ function PlanDetailsView({ planId }: { planId: string }) {
           <span>Delete Tier</span>
         </button>
       </div>
+
+      {!plan.is_active ? (
+        <div
+          className="card"
+          style={{
+            marginBottom: 24,
+            padding: "16px 20px",
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            background: "#fffbeb",
+            border: "1px solid #fde68a",
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontWeight: 700,
+                color: "#92400e",
+                fontSize: 15,
+              }}
+            >
+              This tier is inactive
+            </p>
+            <p style={{ margin: "6px 0 0", fontSize: 14, color: "#b45309" }}>
+              It is hidden from new subscriptions until you activate it.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void handleActivatePlan()}
+            disabled={activating}
+            style={{
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            {activating ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <Power size={18} />
+            )}
+            <span>{activating ? "Activating…" : "Activate plan"}</span>
+          </button>
+        </div>
+      ) : null}
 
       <form onSubmit={handleSubmit}>
         <div

@@ -107,7 +107,8 @@ export default function PatientsPage() {
       const result = await api.get(endpoint);
 
       if (result && result.success && result.data) {
-        const data = result.data.patients || result.data;
+        const payload = result.data;
+        const data = payload.patients ?? payload;
         const finalPatients = Array.isArray(data) && data.length > 0 ? data : [];
         if (finalPatients.length === 0) {
            // Fallback for demo when list is empty
@@ -127,7 +128,15 @@ export default function PatientsPage() {
            setPagination(prev => ({ ...prev, total: dummySet.length }));
         } else {
            setPatients(finalPatients);
-           setPagination(prev => ({ ...prev, total: result.data.total || finalPatients.length }));
+           const rawTotal = payload.total;
+           let total = finalPatients.length;
+           if (typeof rawTotal === "number" && Number.isFinite(rawTotal)) {
+             total = rawTotal;
+           } else if (typeof rawTotal === "string") {
+             const n = Number(rawTotal);
+             if (Number.isFinite(n)) total = n;
+           }
+           setPagination((prev) => ({ ...prev, total }));
         }
       } else {
         if (result.is_access_error || true) { // Force dummy for staff demo

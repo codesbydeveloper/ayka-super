@@ -2,11 +2,25 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { 
-  Stethoscope, ArrowLeft, Save, Loader2, Mail, Phone, MapPin, Briefcase, FileText, Calendar
+  Stethoscope, ArrowLeft, Save, Loader2, Mail, Phone, MapPin, Tag
 } from 'lucide-react';
 import { api } from '@/utils/api';
 import { useToast } from '@/components/ToastProvider';
-import '../../Leads.css';
+import { listLeadLabels, type LeadLabel } from '@/utils/leadLabels';
+
+function labelIdFromLeadPayload(d: Record<string, unknown>): number {
+  const v =
+    d.label_id ??
+    d.lead_label_id ??
+    (d.label &&
+    typeof d.label === 'object' &&
+    d.label !== null &&
+    'id' in d.label &&
+    typeof (d.label as { id: unknown }).id === 'number'
+      ? (d.label as { id: number }).id
+      : undefined);
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
 
 function DoctorDetailsContent() {
   const router = useRouter();
@@ -16,26 +30,61 @@ function DoctorDetailsContent() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [labels, setLabels] = useState<LeadLabel[]>([]);
+  const [labelsLoading, setLabelsLoading] = useState(true);
+  const [labelsError, setLabelsError] = useState<string | null>(null);
   const [lead, setLead] = useState({
     name: '', email: '', number: '', state: '', city: '',
-    speciality: '', note: '', date: new Date().toISOString().split('T')[0]
+    speciality: '', note: '', date: new Date().toISOString().split('T')[0],
+    label_id: 0,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLabelsLoading(true);
+      setLabelsError(null);
+      try {
+        const list = await listLeadLabels(false);
+        if (!cancelled) setLabels(list);
+      } catch (err) {
+        if (!cancelled) {
+          setLabels([]);
+          setLabelsError(
+            err instanceof Error ? err.message : 'Could not load lead labels.',
+          );
+        }
+      } finally {
+        if (!cancelled) setLabelsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const fetchLead = async () => {
       try {
         const result = await api.get(`/api/v1/super-admin/leads/doctor-leads/${id}`);
         if (result.success && result.data) {
-          const d = result.data;
+          const d = result.data as Record<string, unknown>;
           setLead({
-            name: d.name || '',
-            email: d.email || '',
-            number: d.number || d.phone || '',
-            state: d.state || '',
-            city: d.city || '',
-            speciality: d.speciality || d.specialty || '',
-            note: d.note || '',
-            date: d.date || d.created_at?.split('T')[0] || new Date().toISOString().split('T')[0]
+            name: (d.name as string) || '',
+            email: (d.email as string) || '',
+            number: (d.number as string) || (d.phone as string) || '',
+            state: (d.state as string) || '',
+            city: (d.city as string) || '',
+            speciality:
+              (d.speciality as string) || (d.specialty as string) || '',
+            note: (d.note as string) || '',
+            date:
+              (d.date as string) ||
+              (typeof d.created_at === 'string'
+                ? d.created_at.split('T')[0]
+                : '') ||
+              new Date().toISOString().split('T')[0],
+            label_id: labelIdFromLeadPayload(d),
           });
         }
       } catch (err) {
@@ -51,7 +100,15 @@ function DoctorDetailsContent() {
     e.preventDefault();
     setSaving(true);
     try {
-      const result = await api.put(`/api/v1/super-admin/leads/doctor-leads/${id}`, lead);
+      const { label_id, ...rest } = lead;
+      const payload: Record<string, unknown> = { ...rest };
+      const lid = Number(label_id);
+      const selectedLabel = labels.find((l) => l.id === lid);
+      if (lid > 0 && selectedLabel) {
+        payload.label_id = lid;
+        payload.label_name = selectedLabel.label_name.trim();
+      }
+      const result = await api.put(`/api/v1/super-admin/leads/doctor-leads/${id}`, payload);
       if (result.success) {
         router.push('/leads/doctors');
       } else {
@@ -133,6 +190,45 @@ function DoctorDetailsContent() {
                     onChange={e => setLead({ ...lead, speciality: e.target.value })}
                     placeholder="Cardiologist"
                   />
+                </div>
+                <div className="form-group">
+                  {labelsError ? (
+                    <p
+                      className="section-hint"
+                      style={{ color: '#c0392b', margin: '0 0 8px' }}
+                      role="alert"
+                    >
+                      {labelsError}
+                    </p>
+                  ) : null}
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag size={16} style={{ color: '#2A4638' }} aria-hidden />
+                    Label
+                  </label>
+                  <select
+                    className="form-input"
+                    value={lead.label_id > 0 ? String(lead.label_id) : ''}
+                    onChange={(e) =>
+                      setLead({
+                        ...lead,
+                        label_id: e.target.value === '' ? 0 : Number(e.target.value),
+                      })
+                    }
+                    disabled={labelsLoading}
+                  >
+                    {labelsLoading ? (
+                      <option value="">Loading labels…</option>
+                    ) : (
+                      <>
+                        <option value="">No label</option>
+                        {labels.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.label_name}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Target Date</label>
