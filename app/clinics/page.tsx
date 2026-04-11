@@ -21,6 +21,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
 import '../dashboard/Dashboard.css';
 import './Clinics.css';
 
@@ -152,6 +153,66 @@ function normalizeClinicExpiry(raw: Record<string, unknown>): {
   };
 }
 
+/** Admin staff must have can_view_clinics (from login user.permissions). */
+function staffCanViewClinics(): boolean {
+  if (typeof window === "undefined") return true;
+  if (localStorage.getItem("user_type") !== "admin_staff") return true;
+  try {
+    const raw = localStorage.getItem("user_data");
+    if (!raw) return true;
+    const u = JSON.parse(raw) as { permissions?: Record<string, boolean> };
+    return u.permissions?.can_view_clinics !== false;
+  } catch {
+    return true;
+  }
+}
+
+
+function staffCanEditClinics(): boolean {
+  if (typeof window === "undefined") return true;
+  if (localStorage.getItem("user_type") !== "admin_staff") return true;
+  try {
+    const raw = localStorage.getItem("user_data");
+    if (!raw) return false;
+    const u = JSON.parse(raw) as { permissions?: Record<string, boolean> };
+    return u.permissions?.can_edit_clinics === true;
+  } catch {
+    return false;
+  }
+}
+
+
+function extractClinicsListPayload(result: unknown): {
+  clinics: any[];
+  total: number;
+} {
+  if (result == null || typeof result !== "object") {
+    return { clinics: [], total: 0 };
+  }
+  const r = result as Record<string, unknown>;
+  let clinics: any[] = [];
+  let total = 0;
+
+  if (Array.isArray(r.clinics)) {
+    clinics = r.clinics as any[];
+  }
+
+  const data = r.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.clinics)) clinics = d.clinics as any[];
+    else if (Array.isArray(d.items)) clinics = d.items as any[];
+    if (typeof d.total === "number" && Number.isFinite(d.total)) total = d.total;
+  } else if (Array.isArray(data)) {
+    clinics = data as any[];
+  }
+
+  if (typeof r.total === "number" && Number.isFinite(r.total)) total = r.total;
+  if (total === 0 && clinics.length > 0) total = clinics.length;
+
+  return { clinics, total };
+}
+
 /** Non-overlapping buckets: ≤3d, 4–7d, 8–15d (clinics with no expiry skipped). */
 function clinicRenewalBucketCounts(clinicsList: unknown[]) {
   let within3 = 0;
@@ -192,6 +253,7 @@ export default function ClinicsPage() {
   };
 
   const router = useRouter();
+  const toast = useToast();
   const [clinics, setClinics] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -256,19 +318,19 @@ export default function ClinicsPage() {
       !createData.owner_email?.trim() ||
       !createData.owner_phone?.trim()
     ) {
-      alert("Please fill all required fields, including owner details.");
+      toast.error("Please fill all required fields, including owner details.");
       return;
     }
 
     const pin = createData.pin_code.replace(/\s/g, "");
     if (!/^\d{6}$/.test(pin)) {
-      alert("PIN code must be exactly 6 digits.");
+      toast.error("PIN code must be exactly 6 digits.");
       return;
     }
 
     const phone = createData.owner_phone.replace(/\s/g, "");
     if (!/^\d{10}$/.test(phone)) {
-      alert("Owner phone must be a 10-digit mobile number.");
+      toast.error("Owner phone must be a 10-digit mobile number.");
       return;
     }
 
@@ -306,7 +368,7 @@ export default function ClinicsPage() {
       };
 
       if (result && result.success === false) {
-        alert(
+        toast.error(
           typeof result.message === "string"
             ? result.message
             : "Clinic was not created.",
@@ -314,7 +376,7 @@ export default function ClinicsPage() {
         return;
       }
 
-      alert(
+      toast.success(
         typeof result.message === "string" && result.message
           ? result.message
           : "Clinic created successfully.",
@@ -323,7 +385,7 @@ export default function ClinicsPage() {
       setCreateData(initialCreateClinicData());
       fetchClinics();
     } catch (err: unknown) {
-      alert(
+      toast.error(
         err instanceof Error
           ? err.message
           : "API connection failed. Please check network.",
@@ -444,94 +506,197 @@ export default function ClinicsPage() {
 
   const fetchClinics = useCallback(async () => {
     setLoading(true);
-    setError('');
+    setError("");
 
     try {
-      const userType = typeof window !== 'undefined' ? localStorage.getItem('user_type') : null;
-      const isStaff = userType === 'admin_staff';
-      
-      let endpoint = '/api/v1/platform/clinics';
-      
+      const userType =
+        typeof window !== "undefined" ? localStorage.getItem("user_type") : null;
+      const isStaff = userType === "admin_staff";
+
+      if (isStaff && !staffCanViewClinics()) {
+        setError("You do not have permission to view clinics.");
+        setClinics([]);
+        setPagination((prev) => ({ ...prev, total: 0 }));
+        return;
+      }
+
+      // --- Admin Staff: GET /api/v1/admin-staff/clinics (geographic + permission scoped) ---
+      if (isStaff) {
+        const safeLimit = Math.min(Math.max(1, pagination.limit), 100);
+        const queryParams = new URLSearchParams({
+          skip: String(Math.max(0, pagination.skip)),
+          limit: String(safeLimit),
+        });
+        if (selectedState) queryParams.set("state", selectedState);
+        if (selectedCity) queryParams.set("city", selectedCity);
+
+        const result = await api.get(
+          `/api/v1/admin-staff/clinics?${queryParams.toString()}`,
+        );
+        const { clinics: list, total } = extractClinicsListPayload(result);
+        setClinics(Array.isArray(list) ? list : []);
+        setPagination((prev) => ({
+          ...prev,
+          limit: prev.limit > 100 ? 100 : prev.limit,
+          total:
+            typeof total === "number" && Number.isFinite(total) && total >= 0
+              ? total
+              : list.length,
+        }));
+        return;
+      }
+
+      // --- Super Admin / platform ---
+      let endpoint = "/api/v1/platform/clinics";
       const queryParams = new URLSearchParams({
         skip: pagination.skip.toString(),
         limit: pagination.limit.toString(),
-        search: searchTerm
+        search: searchTerm,
       });
 
-      // Switch to advanced APIs if specific filters are active (Super Admin only)
-      if (!isStaff) {
-        if (selectedState || selectedCity) {
-          endpoint = '/api/v1/super-admin/advanced/clinics/by-location';
-          if (selectedState) queryParams.append('state', selectedState);
-          if (selectedCity) queryParams.append('city', selectedCity);
-        } else if (selectedType) {
-          endpoint = '/api/v1/super-admin/advanced/clinics/by-type';
-          queryParams.append('clinic_type', selectedType);
-        }
-      } else {
-        // Staff-specific parameter mapping based on jurisdictional documentation
-        if (selectedState) queryParams.append('state', selectedState);
-        if (selectedCity) queryParams.append('city', selectedCity);
-        // is_active parameter for staff results reconciliation
-        queryParams.append('is_active', 'true');
+      if (selectedState || selectedCity) {
+        endpoint = "/api/v1/super-admin/advanced/clinics/by-location";
+        if (selectedState) queryParams.append("state", selectedState);
+        if (selectedCity) queryParams.append("city", selectedCity);
+      } else if (selectedType) {
+        endpoint = "/api/v1/super-admin/advanced/clinics/by-type";
+        queryParams.append("clinic_type", selectedType);
       }
 
       const result = await api.get(`${endpoint}?${queryParams}`);
       const rootClinics = (result as { clinics?: unknown }).clinics;
+      const extracted = extractClinicsListPayload(result);
 
-      if (result && result.success && (result.data || rootClinics)) {
+      if (
+        result &&
+        (result as { success?: boolean }).success !== false &&
+        (result.data || rootClinics || extracted.clinics.length > 0)
+      ) {
         const data =
-          (result.data as { clinics?: unknown } | undefined)?.clinics ??
-          rootClinics ??
-          result.data ??
-          [];
+          extracted.clinics.length > 0
+            ? extracted.clinics
+            : ((result.data as { clinics?: unknown } | undefined)?.clinics ??
+              rootClinics ??
+              result.data ??
+              []);
         const finalClinics = Array.isArray(data) && data.length > 0 ? data : [];
-        
+
         if (finalClinics.length === 0) {
-           // Fallback for demo when list is empty
-           const dummySet = [
-             { id: 1, name: 'Ayka General Hospital', owner_name: 'Dr. Akash Yadav', plan: 'Scale', is_active: true, city: 'Delhi', created_at: '2025-01-10T10:30:00Z' },
-             { id: 2, name: 'Wellness Center', owner_name: 'Dr. Priya Sharma', plan: 'Growth', is_active: true, city: 'Mumbai', created_at: '2025-02-15T14:20:00Z' },
-             { id: 3, name: 'Metro Orthopedics', owner_name: 'Dr. Rahul Verma', plan: 'Starter', is_active: true, city: 'Bangalore', created_at: '2025-03-01T09:00:00Z' },
-             { id: 4, name: 'City Heart Clinic', owner_name: 'Dr. Sunita Rao', plan: 'Scale', is_active: true, city: 'Hyderabad', created_at: '2025-03-10T12:00:00Z' },
-             { id: 5, name: 'Global Diagnostics', owner_name: 'Dr. Vikram Kochhar', plan: 'Growth', is_active: true, city: 'Pune', created_at: '2025-03-15T11:30:00Z' }
-           ];
-           setClinics(dummySet);
-           setPagination(prev => ({ ...prev, total: dummySet.length }));
+          const dummySet = [
+            {
+              id: 1,
+              name: "Ayka General Hospital",
+              owner_name: "Dr. Akash Yadav",
+              plan: "Scale",
+              is_active: true,
+              city: "Delhi",
+              created_at: "2025-01-10T10:30:00Z",
+            },
+            {
+              id: 2,
+              name: "Wellness Center",
+              owner_name: "Dr. Priya Sharma",
+              plan: "Growth",
+              is_active: true,
+              city: "Mumbai",
+              created_at: "2025-02-15T14:20:00Z",
+            },
+            {
+              id: 3,
+              name: "Metro Orthopedics",
+              owner_name: "Dr. Rahul Verma",
+              plan: "Starter",
+              is_active: true,
+              city: "Bangalore",
+              created_at: "2025-03-01T09:00:00Z",
+            },
+            {
+              id: 4,
+              name: "City Heart Clinic",
+              owner_name: "Dr. Sunita Rao",
+              plan: "Scale",
+              is_active: true,
+              city: "Hyderabad",
+              created_at: "2025-03-10T12:00:00Z",
+            },
+            {
+              id: 5,
+              name: "Global Diagnostics",
+              owner_name: "Dr. Vikram Kochhar",
+              plan: "Growth",
+              is_active: true,
+              city: "Pune",
+              created_at: "2025-03-15T11:30:00Z",
+            },
+          ];
+          setClinics(dummySet);
+          setPagination((prev) => ({ ...prev, total: dummySet.length }));
         } else {
-           setClinics(finalClinics);
-           const dataTotal = (result.data as { total?: unknown } | undefined)
-             ?.total;
-           const rootTotal = (result as { total?: unknown }).total;
-           setPagination((prev) => ({
-             ...prev,
-             total:
-               typeof dataTotal === "number" && Number.isFinite(dataTotal)
-                 ? dataTotal
-                 : typeof rootTotal === "number" && Number.isFinite(rootTotal)
-                   ? rootTotal
-                   : finalClinics.length,
-           }));
+          setClinics(finalClinics);
+          const dataTotal = (result.data as { total?: unknown } | undefined)
+            ?.total;
+          const rootTotal = (result as { total?: unknown }).total;
+          setPagination((prev) => ({
+            ...prev,
+            total:
+              typeof dataTotal === "number" && Number.isFinite(dataTotal)
+                ? dataTotal
+                : typeof rootTotal === "number" && Number.isFinite(rootTotal)
+                  ? rootTotal
+                  : finalClinics.length,
+          }));
         }
-      } else {
-        // High-security: Intercept restricted access signals
-        if ((result as { is_access_error?: boolean }).is_access_error || true) {
-          // Force dummy for staff demo
-           const dummySet = [
-             { id: 1, name: 'Ayka General Hospital', owner_name: 'Dr. Akash Yadav', plan: 'Scale', is_active: true, city: 'Delhi', created_at: '2025-01-10T10:30:00Z' },
-             { id: 2, name: 'Wellness Center', owner_name: 'Dr. Priya Sharma', plan: 'Growth', is_active: true, city: 'Mumbai', created_at: '2025-02-15T14:20:00Z' },
-             { id: 3, name: 'Metro Orthopedics', owner_name: 'Dr. Rahul Verma', plan: 'Starter', is_active: true, city: 'Bangalore', created_at: '2025-03-01T09:00:00Z' }
-           ];
-           setClinics(dummySet);
-           setPagination(prev => ({ ...prev, total: 3 }));
-           if ((result as { is_access_error?: boolean }).is_access_error)
-             setError('DEMO MODE: Showing restricted jurisdictional records.');
-        } 
+      } else if ((result as { is_access_error?: boolean }).is_access_error) {
+        const dummySet = [
+          {
+            id: 1,
+            name: "Ayka General Hospital",
+            owner_name: "Dr. Akash Yadav",
+            plan: "Scale",
+            is_active: true,
+            city: "Delhi",
+            created_at: "2025-01-10T10:30:00Z",
+          },
+          {
+            id: 2,
+            name: "Wellness Center",
+            owner_name: "Dr. Priya Sharma",
+            plan: "Growth",
+            is_active: true,
+            city: "Mumbai",
+            created_at: "2025-02-15T14:20:00Z",
+          },
+          {
+            id: 3,
+            name: "Metro Orthopedics",
+            owner_name: "Dr. Rahul Verma",
+            plan: "Starter",
+            is_active: true,
+            city: "Bangalore",
+            created_at: "2025-03-01T09:00:00Z",
+          },
+        ];
+        setClinics(dummySet);
+        setPagination((prev) => ({ ...prev, total: 3 }));
+        setError("DEMO MODE: Showing restricted jurisdictional records.");
       }
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "Could not load clinics.",
+      );
+      setClinics([]);
+      setPagination((prev) => ({ ...prev, total: 0 }));
     } finally {
       setLoading(false);
     }
-  }, [pagination.skip, pagination.limit, searchTerm, selectedState, selectedCity, selectedType]);
+  }, [
+    pagination.skip,
+    pagination.limit,
+    searchTerm,
+    selectedState,
+    selectedCity,
+    selectedType,
+  ]);
 
   useEffect(() => {
     fetchClinics();
@@ -550,22 +715,55 @@ export default function ClinicsPage() {
   };
 
   const handleToggleStatus = async (clinicId: number, currentStatus: boolean) => {
-    try {
-      const newStatus = !currentStatus;
-      // Hit the production status update endpoint
-      const result = await api.put(`/api/v1/admin-staff/clinics/${clinicId}/status?is_active=${newStatus}`, {});
+    const userType =
+      typeof window !== "undefined" ? localStorage.getItem("user_type") : null;
+    const isStaff = userType === "admin_staff";
 
-      if (result.success || result.status === 200) {
-        setClinics(prev => prev.map(c =>
-          (c.id === clinicId || c.clinic_id === clinicId)
-            ? { ...c, is_active: newStatus }
-            : c
-        ));
-      } else {
-        alert(result.message || 'Status update rejected by server.');
+    if (isStaff && !staffCanEditClinics()) {
+      toast.error("You do not have permission to change clinic status.");
+      return;
+    }
+
+    const newStatus = !currentStatus;
+    const idStr = encodeURIComponent(String(clinicId));
+    const qs = new URLSearchParams({ is_active: String(newStatus) });
+
+    const path = isStaff
+      ? `/api/v1/admin-staff/clinics/${idStr}/status?${qs.toString()}`
+      : `/api/v1/super-admin/clinics/${idStr}/status?${qs.toString()}`;
+
+    try {
+      const result = (await api.put(path, {})) as {
+        success?: boolean;
+        status?: number;
+        message?: string;
+      };
+
+      if (result && result.success === false) {
+        toast.error(
+          typeof result.message === "string"
+            ? result.message
+            : "Status update rejected by server.",
+        );
+        return;
       }
-    } catch (err: any) {
-      alert('Network error during status transition.');
+
+      setClinics((prev) =>
+        prev.map((c) =>
+          c.id === clinicId || c.clinic_id === clinicId
+            ? { ...c, is_active: newStatus }
+            : c,
+        ),
+      );
+      toast.success(
+        newStatus ? "Clinic activated." : "Clinic deactivated.",
+      );
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Could not update clinic status. Check your connection and try again.",
+      );
     }
   };
 
@@ -585,10 +783,14 @@ export default function ClinicsPage() {
         ));
         setIsEditModalOpen(false);
       } else {
-        alert(result.message || 'Failed to update clinic');
+        toast.error(result.message || "Failed to update clinic");
       }
-    } catch (err: any) {
-      alert(err.message || 'An error occurred during update');
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "An error occurred during update.",
+      );
     } finally {
       setUpdating(false);
     }
@@ -602,8 +804,8 @@ export default function ClinicsPage() {
 
   const handleConfirmDelete = async () => {
     if (!selectedClinic) return;
-    if (deleteConfirmText.toLowerCase() !== 'delete') {
-      alert('Please type DELETE to confirm');
+    if (deleteConfirmText.toLowerCase() !== "delete") {
+      toast.error("Please type DELETE to confirm.");
       return;
     }
 
@@ -613,12 +815,22 @@ export default function ClinicsPage() {
       setClinics((prev) => prev.filter((c) => c.id !== selectedClinic.id));
       setIsDeleteModalOpen(false);
       setSelectedClinic(null);
-    } catch (err: any) {
-      alert(err.message || 'An error occurred during deletion');
+      toast.success("Clinic deleted.");
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "An error occurred during deletion.",
+      );
     } finally {
       setDeleting(false);
     }
   };
+
+  const canToggleClinicStatus =
+    typeof window === "undefined" ||
+    localStorage.getItem("user_type") !== "admin_staff" ||
+    staffCanEditClinics();
 
   return (
     <div className="clinics-page page-container">
@@ -840,33 +1052,75 @@ export default function ClinicsPage() {
                       </span>
                     </td>
                     <td>
-                      <button 
-                        className={`status-pill ${clinic.is_active ? 'active' : 'inactive'}`}
-                        onClick={() => handleToggleStatus((rowId ?? clinic.id) as number, !!clinic.is_active)}
-                        title={clinic.is_active ? 'Click to deactivate' : 'Click to activate'}
-                        style={{
-                          border: 'none',
-                          cursor: 'pointer',
-                          padding: '4px 12px',
-                          borderRadius: '20px',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                          backgroundColor: clinic.is_active ? '#DCFCE7' : '#FEE2E2',
-                          color: clinic.is_active ? '#15803D' : '#B91C1C',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        <div style={{ 
-                          width: '6px', 
-                          height: '6px', 
-                          borderRadius: '50%', 
-                          backgroundColor: clinic.is_active ? '#15803D' : '#B91C1C' 
-                        }}></div>
-                        {clinic.is_active ? 'ACTIVE' : 'INACTIVE'}
-                      </button>
+                      {canToggleClinicStatus ? (
+                        <button
+                          type="button"
+                          className={`status-pill ${clinic.is_active ? "active" : "inactive"}`}
+                          onClick={() =>
+                            handleToggleStatus(
+                              (rowId ?? clinic.id) as number,
+                              !!clinic.is_active,
+                            )
+                          }
+                          title={
+                            clinic.is_active
+                              ? "Click to deactivate"
+                              : "Click to activate"
+                          }
+                          style={{
+                            border: "none",
+                            cursor: "pointer",
+                            padding: "4px 12px",
+                            borderRadius: "20px",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            backgroundColor: clinic.is_active ? "#DCFCE7" : "#FEE2E2",
+                            color: clinic.is_active ? "#15803D" : "#B91C1C",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            transition: "all 0.2s ease",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: "6px",
+                              height: "6px",
+                              borderRadius: "50%",
+                              backgroundColor: clinic.is_active ? "#15803D" : "#B91C1C",
+                            }}
+                          />
+                          {clinic.is_active ? "ACTIVE" : "INACTIVE"}
+                        </button>
+                      ) : (
+                        <span
+                          className={`status-pill ${clinic.is_active ? "active" : "inactive"}`}
+                          title="You do not have permission to change clinic status"
+                          style={{
+                            padding: "4px 12px",
+                            borderRadius: "20px",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            backgroundColor: clinic.is_active ? "#DCFCE7" : "#FEE2E2",
+                            color: clinic.is_active ? "#15803D" : "#B91C1C",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            cursor: "not-allowed",
+                            opacity: 0.85,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: "6px",
+                              height: "6px",
+                              borderRadius: "50%",
+                              backgroundColor: clinic.is_active ? "#15803D" : "#B91C1C",
+                            }}
+                          />
+                          {clinic.is_active ? "ACTIVE" : "INACTIVE"}
+                        </span>
+                      )}
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center' }}>

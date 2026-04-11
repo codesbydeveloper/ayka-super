@@ -5,10 +5,12 @@ import {
   Building, ArrowLeft, Save, Loader2, Mail, Phone, MapPin, Plus
 } from 'lucide-react';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
 import '../../Leads.css';
 
 export default function NewClinicLeadPage() {
   const router = useRouter();
+  const toast = useToast();
 
   const [saving, setSaving] = useState(false);
   const [lead, setLead] = useState({
@@ -24,10 +26,10 @@ export default function NewClinicLeadPage() {
       if (result.success) {
         router.push('/leads/clinics');
       } else {
-        alert(result.message || 'Failed to create clinic lead');
+        toast.error(result.message || 'Failed to create clinic lead');
       }
     } catch (err: any) {
-      alert(err.message || 'Error creating lead');
+      toast.error(err.message || 'Error creating lead');
     } finally {
       setSaving(false);
     }

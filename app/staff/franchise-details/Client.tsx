@@ -1,6 +1,12 @@
 "use client";
 
-import React, { Suspense, useCallback, useEffect, useState } from "react";
+import React, {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -14,8 +20,26 @@ import {
   Edit2,
   Trash2,
   Save,
+  MapPin,
+  Layers,
 } from "lucide-react";
 import { api } from "@/utils/api";
+import {
+  fetchCitiesByStateCode,
+  fetchFranchiseDistrictsByStateId,
+  fetchIndianStates,
+  type FranchiseDistrict,
+  type IndianCity,
+  type IndianState,
+} from "@/utils/locations";
+import {
+  formatAssignedAt,
+  franchiseTerritoriesListUrl,
+  parseFranchiseTerritoriesList,
+  type FranchiseTerritoryRow,
+} from "@/utils/franchiseTerritories";
+import { useToast } from "@/components/ToastProvider";
+import { useConfirm } from "@/components/ConfirmDialog";
 import "../../dashboard/Dashboard.css";
 import "../Staff.css";
 
@@ -44,6 +68,15 @@ function fmt(v: unknown): string {
   if (typeof v === "number" && Number.isFinite(v)) return String(v);
   if (typeof v === "string") return v.trim() || "—";
   return "—";
+}
+
+function pickNumericId(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.trunc(v);
+  if (v != null && String(v).trim() !== "") {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  }
+  return undefined;
 }
 
 type FranchiseLevel = "state" | "district" | "city";
@@ -162,6 +195,8 @@ function FranchiseDetailsContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id");
   const canEdit = searchParams.get("mode") === "edit";
+  const toast = useToast();
+  const askConfirm = useConfirm();
 
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -175,6 +210,20 @@ function FranchiseDetailsContent() {
   const [deleting, setDeleting] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [togglingVerify, setTogglingVerify] = useState(false);
+  const [territories, setTerritories] = useState<FranchiseTerritoryRow[]>([]);
+  const [territoriesLoading, setTerritoriesLoading] = useState(false);
+  const [territoriesError, setTerritoriesError] = useState<string | null>(null);
+
+  const [locationStates, setLocationStates] = useState<IndianState[]>([]);
+  const [bulkDistrictOptions, setBulkDistrictOptions] = useState<
+    FranchiseDistrict[]
+  >([]);
+  const [bulkCityOptions, setBulkCityOptions] = useState<IndianCity[]>([]);
+  const [bulkDistrictsLoading, setBulkDistrictsLoading] = useState(false);
+  const [bulkCitiesLoading, setBulkCitiesLoading] = useState(false);
+  const [bulkDistrictIds, setBulkDistrictIds] = useState<number[]>([]);
+  const [bulkCityIds, setBulkCityIds] = useState<number[]>([]);
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
 
   const franchisePath = (fid: string) =>
     `/api/v1/super-admin/franchises/franchises/${encodeURIComponent(fid)}`;
@@ -188,6 +237,59 @@ function FranchiseDetailsContent() {
   /** DELETE …/franchises/{id}?force=true — force orphans clinics per API docs */
   const franchiseDeletePath = (fid: string, force: boolean) =>
     `${franchisePath(fid)}${force ? "?force=true" : ""}`;
+
+  const franchiseBulkTerritoriesPath = (fid: string) =>
+    `/api/v1/super-admin/territories/franchises/${encodeURIComponent(fid)}/territories/bulk`;
+
+  const effectiveStateId = useMemo(() => {
+    if (!franchise) return undefined;
+    const direct = pickNumericId(franchise.state_id);
+    if (direct != null) return direct;
+    const name =
+      typeof franchise.state === "string" ? franchise.state.trim() : "";
+    if (!name || locationStates.length === 0) return undefined;
+    const match = locationStates.find(
+      (s) => s.name.toLowerCase() === name.toLowerCase(),
+    );
+    return match?.id;
+  }, [franchise, locationStates]);
+
+  const effectiveStateCode = useMemo(() => {
+    if (!franchise) return "";
+    const codeRaw = franchise.state_code;
+    if (typeof codeRaw === "string" && /^[a-z]{2}$/i.test(codeRaw.trim())) {
+      return codeRaw.trim().toUpperCase();
+    }
+    const name =
+      typeof franchise.state === "string" ? franchise.state.trim() : "";
+    if (!name || locationStates.length === 0) return "";
+    const match = locationStates.find(
+      (s) => s.name.toLowerCase() === name.toLowerCase(),
+    );
+    return match?.code ?? "";
+  }, [franchise, locationStates]);
+
+  const fetchFranchiseTerritories = useCallback(async () => {
+    const fid = (id ?? "").trim();
+    if (!fid) {
+      setTerritories([]);
+      setTerritoriesError(null);
+      return;
+    }
+    setTerritoriesLoading(true);
+    setTerritoriesError(null);
+    try {
+      const result = await api.get<unknown>(franchiseTerritoriesListUrl(fid));
+      setTerritories(parseFranchiseTerritoriesList(result));
+    } catch (err: unknown) {
+      setTerritories([]);
+      setTerritoriesError(
+        err instanceof Error ? err.message : "Could not load territories.",
+      );
+    } finally {
+      setTerritoriesLoading(false);
+    }
+  }, [id]);
 
   const fetchFranchise = useCallback(async () => {
     const fid = (id ?? "").trim();
@@ -235,6 +337,124 @@ function FranchiseDetailsContent() {
     void fetchFranchise();
   }, [fetchFranchise]);
 
+  useEffect(() => {
+    void fetchFranchiseTerritories();
+  }, [fetchFranchiseTerritories]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    void fetchIndianStates()
+      .then(setLocationStates)
+      .catch(() => setLocationStates([]));
+  }, [canEdit]);
+
+  useEffect(() => {
+    if (!canEdit || !form || form.level !== "state" || effectiveStateId == null) {
+      setBulkDistrictOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setBulkDistrictsLoading(true);
+    void fetchFranchiseDistrictsByStateId(effectiveStateId)
+      .then((rows) => {
+        if (!cancelled) setBulkDistrictOptions(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setBulkDistrictOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBulkDistrictsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canEdit, form?.level, effectiveStateId]);
+
+  useEffect(() => {
+    if (!canEdit || !form || form.level === "state" || !effectiveStateCode) {
+      setBulkCityOptions([]);
+      return;
+    }
+    const districtId = franchise ? pickNumericId(franchise.district_id) : undefined;
+    if (
+      (form.level === "district" || form.level === "city") &&
+      districtId == null
+    ) {
+      setBulkCityOptions([]);
+      setBulkCitiesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setBulkCitiesLoading(true);
+    void fetchCitiesByStateCode(effectiveStateCode)
+      .then((list) => {
+        if (cancelled) return;
+        setBulkCityOptions(
+          list.filter(
+            (c) =>
+              c.district_id != null && c.district_id === districtId,
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setBulkCityOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBulkCitiesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canEdit, form?.level, effectiveStateCode, franchise?.district_id]);
+
+  const toggleBulkDistrict = (did: number) => {
+    setBulkDistrictIds((prev) =>
+      prev.includes(did) ? prev.filter((x) => x !== did) : [...prev, did],
+    );
+  };
+
+  const toggleBulkCity = (cid: number) => {
+    setBulkCityIds((prev) =>
+      prev.includes(cid) ? prev.filter((x) => x !== cid) : [...prev, cid],
+    );
+  };
+
+  const handleBulkAssignTerritories = async () => {
+    const fid = (id ?? "").trim();
+    if (!fid || !form) return;
+    const districtsPayload =
+      form.level === "state" ? bulkDistrictIds : ([] as number[]);
+    const citiesPayload =
+      form.level === "district" || form.level === "city"
+        ? bulkCityIds
+        : ([] as number[]);
+    if (districtsPayload.length === 0 && citiesPayload.length === 0) {
+      toast.error(
+        form.level === "state"
+          ? "Select at least one district."
+          : "Select at least one city.",
+      );
+      return;
+    }
+    setBulkSubmitting(true);
+    try {
+      await api.post(franchiseBulkTerritoriesPath(fid), {
+        districts: districtsPayload,
+        cities: citiesPayload,
+      });
+      toast.success("Territories assigned.");
+      setBulkDistrictIds([]);
+      setBulkCityIds([]);
+      await fetchFranchiseTerritories();
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not assign territories.",
+      );
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const fid = (id ?? "").trim();
@@ -248,7 +468,7 @@ function FranchiseDetailsContent() {
         buildFranchiseUpdatePayload(form, permEdit),
       );
       if (result && typeof result === "object" && result.success === false) {
-        alert(
+        toast.error(
           typeof result.message === "string"
             ? result.message
             : "Update was not accepted.",
@@ -258,7 +478,7 @@ function FranchiseDetailsContent() {
       if (desiredActive !== serverActive) {
         await api.patch(franchiseToggleStatusPath(fid), {});
       }
-      alert(
+      toast.success(
         typeof result.message === "string" && result.message
           ? result.message
           : "Franchise updated successfully.",
@@ -266,8 +486,9 @@ function FranchiseDetailsContent() {
       setForm((prev) => (prev ? { ...prev, password: "" } : prev));
       router.replace(`/staff/franchise-details?id=${encodeURIComponent(fid)}`);
       await fetchFranchise();
+      await fetchFranchiseTerritories();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Unable to save changes.");
+      toast.error(err instanceof Error ? err.message : "Unable to save changes.");
     } finally {
       setSaving(false);
     }
@@ -276,13 +497,13 @@ function FranchiseDetailsContent() {
   const handleDelete = async () => {
     const fid = (id ?? "").trim();
     if (!fid) return;
-    if (
-      !confirm(
-        "Delete this franchise permanently? This cannot be undone.",
-      )
-    ) {
-      return;
-    }
+    const firstOk = await askConfirm({
+      title: "Delete franchise?",
+      message: "This permanently removes this franchise. This cannot be undone.",
+      variant: "danger",
+      confirmLabel: "Delete",
+    });
+    if (!firstOk) return;
     setDeleting(true);
     try {
       await api.delete(franchiseDeletePath(fid, false));
@@ -290,18 +511,18 @@ function FranchiseDetailsContent() {
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Delete failed.";
-      if (
-        !confirm(
-          `${msg}\n\nForce delete? This will remove the franchise even if clinics are linked and may orphan clinics and staff.`,
-        )
-      ) {
-        return;
-      }
+      const forceOk = await askConfirm({
+        title: "Force delete?",
+        message: `${msg}\n\nForce delete removes the franchise even if clinics are linked and may orphan clinics and staff.`,
+        variant: "danger",
+        confirmLabel: "Force delete",
+      });
+      if (!forceOk) return;
       try {
         await api.delete(franchiseDeletePath(fid, true));
         router.push("/staff");
       } catch (err2: unknown) {
-        alert(
+        toast.error(
           err2 instanceof Error ? err2.message : "Force delete failed.",
         );
       }
@@ -319,7 +540,7 @@ function FranchiseDetailsContent() {
       await api.patch(franchiseToggleStatusPath(fid), {});
       await fetchFranchise();
     } catch (err: unknown) {
-      alert(
+      toast.error(
         err instanceof Error ? err.message : "Could not update franchise status.",
       );
     } finally {
@@ -344,7 +565,7 @@ function FranchiseDetailsContent() {
         },
       );
       if (result && typeof result === "object" && result.success === false) {
-        alert(
+        toast.error(
           typeof result.message === "string"
             ? result.message
             : "Verification update was not accepted.",
@@ -355,11 +576,11 @@ function FranchiseDetailsContent() {
         typeof result.message === "string" &&
         result.message.trim()
       ) {
-        alert(result.message);
+        toast.info(result.message);
       }
       await fetchFranchise();
     } catch (err: unknown) {
-      alert(
+      toast.error(
         err instanceof Error
           ? err.message
           : "Could not update franchise verification.",
@@ -1059,6 +1280,327 @@ function FranchiseDetailsContent() {
                   }}
                 />
               </div>
+            </div>
+
+            <div className="card" style={{ padding: 32 }}>
+              <h3
+                style={{
+                  fontSize: 16,
+                  fontWeight: 800,
+                  marginBottom: 24,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <MapPin size={20} color="var(--primary)" /> Assigned
+                territories
+              </h3>
+              {territoriesLoading ? (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    color: "#64748b",
+                    fontSize: 13,
+                  }}
+                >
+                  <Loader2 className="animate-spin" size={18} />
+                  Loading territories…
+                </div>
+              ) : territoriesError ? (
+                <p style={{ color: "#b91c1c", fontSize: 13, margin: 0 }}>
+                  {territoriesError}
+                </p>
+              ) : territories.length === 0 ? (
+                <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
+                  No territories assigned to this franchise.
+                </p>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: 13,
+                    }}
+                  >
+                    <thead>
+                      <tr
+                        style={{
+                          borderBottom: "1px solid #e2e8f0",
+                          textAlign: "left",
+                        }}
+                      >
+                        <th
+                          style={{
+                            padding: "8px 12px 8px 0",
+                            color: "#64748b",
+                            fontWeight: 700,
+                          }}
+                        >
+                          Type
+                        </th>
+                        <th
+                          style={{
+                            padding: "8px 12px",
+                            color: "#64748b",
+                            fontWeight: 700,
+                          }}
+                        >
+                          Territory
+                        </th>
+                        <th
+                          style={{
+                            padding: "8px 12px",
+                            color: "#64748b",
+                            fontWeight: 700,
+                          }}
+                        >
+                          ID
+                        </th>
+                        <th
+                          style={{
+                            padding: "8px 12px",
+                            color: "#64748b",
+                            fontWeight: 700,
+                          }}
+                        >
+                          Assigned by
+                        </th>
+                        <th
+                          style={{
+                            padding: "8px 12px",
+                            color: "#64748b",
+                            fontWeight: 700,
+                          }}
+                        >
+                          Assigned at
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {territories.map((t) => (
+                        <tr
+                          key={`${t.id}-${t.territory_type}-${t.territory_id}`}
+                          style={{ borderBottom: "1px solid #f1f5f9" }}
+                        >
+                          <td
+                            style={{
+                              padding: "10px 12px 10px 0",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {t.territory_type}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#1e293b" }}>
+                            {t.territory_name}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#64748b" }}>
+                            {t.territory_id}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#475569" }}>
+                            {t.assigned_by_name}
+                          </td>
+                          <td
+                            style={{
+                              padding: "10px 12px",
+                              color: "#475569",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {formatAssignedAt(t.assigned_at)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {canEdit ? (
+                <div
+                  style={{
+                    marginTop: 24,
+                    paddingTop: 24,
+                    borderTop: "1px solid #e2e8f0",
+                  }}
+                >
+                  <h4
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 800,
+                      marginBottom: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      color: "#1e293b",
+                    }}
+                  >
+                    <Layers size={18} color="var(--primary)" /> Bulk assign
+                    territories
+                  </h4>
+                  <p
+                    style={{
+                      fontSize: 12,
+                      color: "#64748b",
+                      marginBottom: 16,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {form.level === "state"
+                      ? "State-level franchise: select districts to assign."
+                      : "District / city-level franchise: select cities to assign."}
+                  </p>
+                  {form.level === "state" ? (
+                    effectiveStateId == null ? (
+                      <p style={{ fontSize: 13, color: "#b45309", margin: 0 }}>
+                        Could not resolve state (need state_id or a matching state
+                        name from the locations directory). Load states failed or
+                        franchise state is missing.
+                      </p>
+                    ) : bulkDistrictsLoading ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          color: "#64748b",
+                          fontSize: 13,
+                        }}
+                      >
+                        <Loader2 className="animate-spin" size={16} />
+                        Loading districts…
+                      </div>
+                    ) : bulkDistrictOptions.length === 0 ? (
+                      <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>
+                        No districts found for this state.
+                      </p>
+                    ) : (
+                      <div
+                        style={{
+                          maxHeight: 240,
+                          overflowY: "auto",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                          marginBottom: 16,
+                        }}
+                      >
+                        {bulkDistrictOptions.map((d) => (
+                          <label
+                            key={d.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              fontSize: 13,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={bulkDistrictIds.includes(d.id)}
+                              onChange={() => toggleBulkDistrict(d.id)}
+                            />
+                            <span>
+                              {d.name}{" "}
+                              <span style={{ color: "#94a3b8" }}>(#{d.id})</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )
+                  ) : effectiveStateCode === "" ? (
+                    <p style={{ fontSize: 13, color: "#b45309", margin: 0 }}>
+                      Could not resolve state code for loading cities.
+                    </p>
+                  ) : (form.level === "district" || form.level === "city") &&
+                    pickNumericId(franchise.district_id) == null ? (
+                    <p style={{ fontSize: 13, color: "#b45309", margin: 0 }}>
+                      Franchise is missing district_id; cannot filter cities for
+                      bulk assign.
+                    </p>
+                  ) : bulkCitiesLoading ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        color: "#64748b",
+                        fontSize: 13,
+                      }}
+                    >
+                      <Loader2 className="animate-spin" size={16} />
+                      Loading cities…
+                    </div>
+                  ) : bulkCityOptions.length === 0 ? (
+                    <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>
+                      No cities found for this district / state.
+                    </p>
+                  ) : (
+                    <div
+                      style={{
+                        maxHeight: 240,
+                        overflowY: "auto",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        marginBottom: 16,
+                      }}
+                    >
+                      {bulkCityOptions.map((c) => (
+                        <label
+                          key={c.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            fontSize: 13,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={bulkCityIds.includes(c.id)}
+                            onChange={() => toggleBulkCity(c.id)}
+                          />
+                          <span>
+                            {c.name}{" "}
+                            <span style={{ color: "#94a3b8" }}>(#{c.id})</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{
+                      padding: "10px 18px",
+                      fontWeight: 700,
+                      fontSize: 13,
+                    }}
+                    disabled={
+                      bulkSubmitting ||
+                      saving ||
+                      deleting ||
+                      (form.level === "state" && bulkDistrictIds.length === 0) ||
+                      ((form.level === "district" || form.level === "city") &&
+                        bulkCityIds.length === 0)
+                    }
+                    onClick={() => void handleBulkAssignTerritories()}
+                  >
+                    {bulkSubmitting ? (
+                      <>
+                        <Loader2 className="animate-spin" size={16} /> Assigning…
+                      </>
+                    ) : (
+                      "Assign selected territories"
+                    )}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
 

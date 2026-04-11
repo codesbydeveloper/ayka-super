@@ -11,6 +11,48 @@ import { api } from '@/utils/api';
 import '../../dashboard/Dashboard.css';
 import './ClinicDetail.css';
 
+function staffCanViewClinics(): boolean {
+  if (typeof window === "undefined") return true;
+  if (localStorage.getItem("user_type") !== "admin_staff") return true;
+  try {
+    const raw = localStorage.getItem("user_data");
+    if (!raw) return true;
+    const u = JSON.parse(raw) as { permissions?: Record<string, boolean> };
+    return u.permissions?.can_view_clinics !== false;
+  } catch {
+    return true;
+  }
+}
+
+function staffCanEditClinics(): boolean {
+  if (typeof window === "undefined") return true;
+  if (localStorage.getItem("user_type") !== "admin_staff") return true;
+  try {
+    const raw = localStorage.getItem("user_data");
+    if (!raw) return false;
+    const u = JSON.parse(raw) as { permissions?: Record<string, boolean> };
+    return u.permissions?.can_edit_clinics === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Single-clinic payload from GET …/clinics/{id} (admin-staff or super-admin). */
+function extractClinicDetailPayload(result: unknown): Record<string, unknown> | null {
+  if (result == null || typeof result !== "object") return null;
+  const r = result as Record<string, unknown>;
+  if (r.success === false) return null;
+  const d = r.data;
+  if (d && typeof d === "object" && !Array.isArray(d)) {
+    return d as Record<string, unknown>;
+  }
+  const c = r.clinic;
+  if (c && typeof c === "object" && !Array.isArray(c)) {
+    return c as Record<string, unknown>;
+  }
+  return null;
+}
+
 function ClinicDetailsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -47,44 +89,91 @@ function ClinicDetailsContent() {
     if (!id) {
       setLoading(false);
       setClinic(null);
-      setError('Missing clinic id. Open a clinic from the directory.');
+      setError("Missing clinic id. Open a clinic from the directory.");
       return;
     }
+
     setLoading(true);
-    setError('');
+    setError("");
 
-    try {
-      const userType = typeof window !== 'undefined' ? localStorage.getItem('user_type') : null;
-      const isStaff = userType === 'admin_staff';
-      const endpoint = `/api/v1/platform/clinics`;
+    const userType =
+      typeof window !== "undefined" ? localStorage.getItem("user_type") : null;
+    const isStaff = userType === "admin_staff";
 
-      const result = await api.get(endpoint);
-
-      if (result.success) {
-        setClinic(result.data);
-      } else {
-        throw new Error(result.message || 'Access Denied: Jurisdictional dossier unreachable.');
+    // --- Admin Staff: GET /api/v1/admin-staff/clinics/{clinic_id} ---
+    if (isStaff) {
+      if (!staffCanViewClinics()) {
+        setClinic(null);
+        setError("You do not have permission to view clinic details.");
+        setLoading(false);
+        return;
       }
-    } catch (err: any) {
-      console.warn('Syncing with local resilient dossier cache...', err);
+
+      try {
+        const result = await api.get(
+          `/api/v1/admin-staff/clinics/${encodeURIComponent(id)}`,
+        );
+        const row = extractClinicDetailPayload(result);
+        if (row) {
+          setClinic(row);
+          setError("");
+        } else {
+          setClinic(null);
+          const msg =
+            typeof (result as { message?: string }).message === "string"
+              ? (result as { message: string }).message
+              : "Clinic not found or outside your assigned geographic area.";
+          setError(msg);
+        }
+      } catch (err: unknown) {
+        setClinic(null);
+        setError(
+          err instanceof Error ? err.message : "Could not load clinic details.",
+        );
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // --- Super Admin / others: single-clinic detail ---
+    try {
+      const result = await api.get(
+        `/api/v1/super-admin/clinics/${encodeURIComponent(id)}`,
+      );
+      const row = extractClinicDetailPayload(result);
+      if (row) {
+        setClinic(row);
+        setError("");
+      } else {
+        throw new Error(
+          typeof (result as { message?: string }).message === "string"
+            ? (result as { message: string }).message
+            : "Invalid clinic response.",
+        );
+      }
+    } catch (err: unknown) {
+      console.warn("Clinic detail API unreachable, using demo dossier.", err);
       const mockDossier = {
-        id: parseInt(id || '0'),
-        name: 'City Care Hospital',
-        owner_name: 'Dr. Akash Yadav',
-        owner_email: 'akash@citycare.com',
-        owner_phone: '+91 91234 56789',
-        address: 'Sector 45, DLF Phase 4',
-        city: 'Gurugram',
-        state: 'Haryana',
-        pin_code: '122002',
+        id: parseInt(id || "0", 10),
+        name: "City Care Hospital",
+        owner_name: "Dr. Akash Yadav",
+        owner_email: "akash@citycare.com",
+        owner_phone: "+91 91234 56789",
+        address: "Sector 45, DLF Phase 4",
+        city: "Gurugram",
+        state: "Haryana",
+        pin_code: "122002",
         is_active: true,
-        clinic_type: 'multi_speciality',
-        subscription_plan: 'Scale',
-        created_at: '2023-11-12T08:00:00Z',
-        last_sync: new Date().toISOString()
+        clinic_type: "multi_speciality",
+        subscription_plan: "Scale",
+        created_at: "2023-11-12T08:00:00Z",
+        last_sync: new Date().toISOString(),
       };
       setClinic(mockDossier);
-      setError('RESILIENT MODE ACTIVE: Production dossier currently unreachable. Displaying cached medical intelligence.');
+      setError(
+        "RESILIENT MODE ACTIVE: Production dossier currently unreachable. Displaying cached medical intelligence.",
+      );
     } finally {
       setLoading(false);
     }
@@ -103,21 +192,51 @@ function ClinicDetailsContent() {
 
   const handleUpdateClinic = async () => {
     if (!id) return;
+
+    const userType =
+      typeof window !== "undefined" ? localStorage.getItem("user_type") : null;
+    const isStaff = userType === "admin_staff";
+
+    if (isStaff && !staffCanEditClinics()) {
+      setError("You do not have permission to edit clinics.");
+      return;
+    }
+
     setUpdateLoading(true);
     try {
-      const result = await api.put(`/api/v1/super-admin/clinics/${id}`, {
-        name: editName,
-        is_active: editIsActive
-      });
+      const body = { name: editName, is_active: editIsActive };
 
-      if (result.success) {
-        setClinic((prev: any) => ({ ...prev, name: editName, is_active: editIsActive }));
-        setIsEditing(false);
-      } else {
-        setError(result.message || 'Failed to update clinic');
+      const result = isStaff
+        ? await api.put(
+            `/api/v1/admin-staff/clinics/${encodeURIComponent(id)}`,
+            body,
+          )
+        : await api.put(`/api/v1/super-admin/clinics/${encodeURIComponent(id)}`, body);
+
+      if (
+        result &&
+        typeof result === "object" &&
+        (result as { success?: boolean }).success === false
+      ) {
+        setError(
+          typeof (result as { message?: string }).message === "string"
+            ? (result as { message: string }).message
+            : "Failed to update clinic.",
+        );
+        return;
       }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred during update');
+
+      setClinic((prev: any) => ({
+        ...prev,
+        name: editName,
+        is_active: editIsActive,
+      }));
+      setIsEditing(false);
+      setError("");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "An error occurred during update.",
+      );
     } finally {
       setUpdateLoading(false);
     }
@@ -270,7 +389,11 @@ function ClinicDetailsContent() {
   };
 
   const isStaffUser =
-    typeof window !== 'undefined' && localStorage.getItem('user_type') === 'admin_staff';
+    typeof window !== "undefined" &&
+    localStorage.getItem("user_type") === "admin_staff";
+
+  /** Super Admin always; Admin Staff only if can_edit_clinics. */
+  const showClinicEditControls = !isStaffUser || staffCanEditClinics();
 
   if (loading) {
     return (
@@ -342,9 +465,15 @@ function ClinicDetailsContent() {
              </>
            ) : (
              <>
-               <button className="btn btn-secondary" onClick={() => setIsEditing(true)}>
-                 <Edit2 size={18} /><span>Edit Clinic</span>
-               </button>
+               {showClinicEditControls ? (
+                 <button
+                   className="btn btn-secondary"
+                   onClick={() => setIsEditing(true)}
+                 >
+                   <Edit2 size={18} />
+                   <span>Edit Clinic</span>
+                 </button>
+               ) : null}
                {/* <button className="btn btn-secondary">Impersonate</button> */}
                {!isStaffUser ? (
                  <button

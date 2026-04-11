@@ -16,10 +16,12 @@ import {
   User
 } from 'lucide-react';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
 import '../Staff.css';
 
 function ProvisionStaffContent() {
   const router = useRouter();
+  const toast = useToast();
   const [loading, setLoading] = useState(false);
   
   const initialFormData = {
@@ -44,14 +46,14 @@ function ProvisionStaffContent() {
       const result = await api.post('/api/v1/admin-staff-management/staff', formData);
       
       if (result && result.success) {
-        alert("SUCCESS: New platform designation synchronized with Ayka Central.");
+        toast.success("New platform designation synchronized with Ayka Central.");
         router.push('/staff');
       } else {
-        alert("INFO: Role provisioned locally. Platform sync will complete on next handshake.");
+        toast.info("Role provisioned locally. Platform sync will complete on next handshake.");
         router.push('/staff');
       }
     } catch (err: any) {
-      alert("ERROR: Platform synchronization timeout. Verification failed.");
+      toast.error("Platform synchronization timeout. Verification failed.");
     } finally {
       setLoading(false);
     }

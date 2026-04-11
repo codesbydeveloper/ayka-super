@@ -21,6 +21,50 @@ import Link from 'next/link';
 import { api } from '@/utils/api';
 import './Patients.css';
 
+function staffCanViewClinics(): boolean {
+  if (typeof window === "undefined") return true;
+  if (localStorage.getItem("user_type") !== "admin_staff") return true;
+  try {
+    const raw = localStorage.getItem("user_data");
+    if (!raw) return true;
+    const u = JSON.parse(raw) as { permissions?: Record<string, boolean> };
+    return u.permissions?.can_view_clinics !== false;
+  } catch {
+    return true;
+  }
+}
+
+function extractClinicsListPayload(result: unknown): {
+  clinics: any[];
+  total: number;
+} {
+  if (result == null || typeof result !== "object") {
+    return { clinics: [], total: 0 };
+  }
+  const r = result as Record<string, unknown>;
+  let clinics: any[] = [];
+  let total = 0;
+
+  if (Array.isArray(r.clinics)) {
+    clinics = r.clinics as any[];
+  }
+
+  const data = r.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.clinics)) clinics = d.clinics as any[];
+    else if (Array.isArray(d.items)) clinics = d.items as any[];
+    if (typeof d.total === "number" && Number.isFinite(d.total)) total = d.total;
+  } else if (Array.isArray(data)) {
+    clinics = data as any[];
+  }
+
+  if (typeof r.total === "number" && Number.isFinite(r.total)) total = r.total;
+  if (total === 0 && clinics.length > 0) total = clinics.length;
+
+  return { clinics, total };
+}
+
 export default function PatientsPage() {
   const [patients, setPatients] = useState<any[]>([]);
   const [colleges, setColleges] = useState<any[]>([]); // To be used for clinic filtering
@@ -131,20 +175,40 @@ export default function PatientsPage() {
     setPagination((prev) => ({ ...prev, skip: 0 }));
   }, [debouncedSearch]);
 
-  // Fetch clinics for filtering if needed
+  // Clinics for "All Registered Clinics" dropdown — scoped by role
   useEffect(() => {
-    const fetchClinics = async () => {
+    const fetchClinicsForFilter = async () => {
       try {
-        const result = await api.get('/api/v1/super-admin/clinics?limit=100');
-        if (result && result.success) {
-          const data = result.data.clinics || result.data;
-          setColleges(Array.isArray(data) ? data : []);
+        const userType =
+          typeof window !== "undefined"
+            ? localStorage.getItem("user_type")
+            : null;
+        const isStaff = userType === "admin_staff";
+
+        if (isStaff && !staffCanViewClinics()) {
+          setColleges([]);
+          return;
         }
+
+        const safeLimit = 100;
+        const queryParams = new URLSearchParams({
+          skip: "0",
+          limit: String(safeLimit),
+        });
+
+        const endpoint = isStaff
+          ? `/api/v1/admin-staff/clinics?${queryParams.toString()}`
+          : `/api/v1/super-admin/clinics?${queryParams.toString()}`;
+
+        const result = await api.get(endpoint);
+        const { clinics } = extractClinicsListPayload(result);
+        setColleges(Array.isArray(clinics) ? clinics : []);
       } catch (e) {
-        console.error('Failed to fetch clinics for filter');
+        console.error("Failed to fetch clinics for filter:", e);
+        setColleges([]);
       }
     };
-    fetchClinics();
+    void fetchClinicsForFilter();
   }, []);
 
   useEffect(() => {
@@ -218,9 +282,16 @@ export default function PatientsPage() {
               onChange={(e) => handleClinicChange(e.target.value)}
             >
               <option value="">All Registered Clinics</option>
-              {colleges.map((clinic: any) => (
-                <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
-              ))}
+              {colleges.map((clinic: any) => {
+                const cid = clinic.id ?? clinic.clinic_id;
+                const label =
+                  clinic.name ?? clinic.clinic_name ?? `Clinic ${cid ?? ""}`;
+                return (
+                  <option key={String(cid)} value={String(cid)}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
             <button type="submit" className="btn btn-primary">
               <Filter size={18} />

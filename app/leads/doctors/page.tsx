@@ -31,6 +31,8 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
+import { useConfirm } from '@/components/ConfirmDialog';
 import '../Leads.css';
 
 function doctorLeadsBase(): string {
@@ -213,6 +215,9 @@ export default function DoctorLeadsPage() {
   const [remarkSubmitting, setRemarkSubmitting] = useState(false);
   const [remarkError, setRemarkError] = useState('');
 
+  const toast = useToast();
+  const askConfirm = useConfirm();
+
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingCsv, setUploadingCsv] = useState(false);
@@ -302,21 +307,22 @@ export default function DoctorLeadsPage() {
   const handleDeleteDoctorLead = async (lead: any) => {
     const leadId = leadRowId(lead) ?? lead?.id;
     if (leadId == null) {
-      alert('Missing lead id.');
+      toast.error("Missing lead id.");
       return;
     }
 
     const displayName =
-      typeof lead.name === 'string' && lead.name.trim()
+      typeof lead.name === "string" && lead.name.trim()
         ? lead.name.trim()
-        : 'this lead';
-    if (
-      !window.confirm(
-        `Permanently delete ${displayName}? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
+        : "this lead";
+    const ok = await askConfirm({
+      title: "Delete lead",
+      message: `Permanently delete ${displayName}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
 
     const key = String(leadId);
     setDeletingLeadId(key);
@@ -325,10 +331,10 @@ export default function DoctorLeadsPage() {
       const result = await api.delete<DeleteLeadResponse>(path);
 
       if (result.success === false) {
-        alert(
-          typeof result.message === 'string'
+        toast.error(
+          typeof result.message === "string"
             ? result.message
-            : 'Could not delete lead.',
+            : "Could not delete lead.",
         );
         return;
       }
@@ -348,8 +354,9 @@ export default function DoctorLeadsPage() {
         }
         return prev;
       });
+      toast.success("Lead deleted.");
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Could not delete lead.');
+      toast.error(e instanceof Error ? e.message : "Could not delete lead.");
     } finally {
       setDeletingLeadId(null);
     }
@@ -450,7 +457,7 @@ export default function DoctorLeadsPage() {
       }
 
       if (all.length === 0) {
-        window.alert('No doctor leads to export for the current filters.');
+        toast.info("No doctor leads to export for the current filters.");
         return;
       }
 
@@ -536,14 +543,14 @@ export default function DoctorLeadsPage() {
       const date = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, `doctor-leads-${date}.xlsx`);
     } catch (e: unknown) {
-      console.error('Doctor leads Excel export failed:', e);
-      window.alert(
-        e instanceof Error ? e.message : 'Could not generate the Excel file.',
+      console.error("Doctor leads Excel export failed:", e);
+      toast.error(
+        e instanceof Error ? e.message : "Could not generate the Excel file.",
       );
     } finally {
       setExportingExcel(false);
     }
-  }, [searchTerm]);
+  }, [searchTerm, toast]);
 
   return (
     <div className="page-container leads-page">

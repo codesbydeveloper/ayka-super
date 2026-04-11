@@ -22,6 +22,7 @@ import {
   X
 } from 'lucide-react';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
 import '../dashboard/Dashboard.css';
 import './Analytics.css';
 
@@ -74,6 +75,7 @@ function initialFiltersWithRange(): {
 }
 
 export default function AnalyticsPage() {
+  const toast = useToast();
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -206,7 +208,7 @@ export default function AnalyticsPage() {
       }
     } catch (err) {
       console.error('Forensic fetch failed:', err);
-      alert('System signal decode failed.');
+      toast.error('System signal decode failed.');
     } finally {
       setFetchingLog(false);
     }

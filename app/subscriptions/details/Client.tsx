@@ -16,6 +16,8 @@ import {
   Globe,
 } from "lucide-react";
 import { api } from "@/utils/api";
+import { useToast } from "@/components/ToastProvider";
+import { useConfirm } from "@/components/ConfirmDialog";
 import {
   parseAddonSinglePayload,
   findAddonInListPayload,
@@ -28,6 +30,8 @@ const ADDON_LIST_URL =
 
 function AddonDetailsView({ addonId }: { addonId: string }) {
   const router = useRouter();
+  const toast = useToast();
+  const askConfirm = useConfirm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -60,7 +64,7 @@ function AddonDetailsView({ addonId }: { addonId: string }) {
         }
         if (cancelled) return;
         if (!parsed) {
-          alert("Add-on not found.");
+          toast.error("Add-on not found.");
           router.push("/subscriptions?category=addon");
           return;
         }
@@ -77,7 +81,7 @@ function AddonDetailsView({ addonId }: { addonId: string }) {
         });
       } catch (err: unknown) {
         if (!cancelled) {
-          alert(
+          toast.error(
             err instanceof Error ? err.message : "Could not load this add-on.",
           );
           router.push("/subscriptions?category=addon");
@@ -90,7 +94,7 @@ function AddonDetailsView({ addonId }: { addonId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [addonId, router]);
+  }, [addonId, router, toast]);
 
   const handleAddonFeatureChange = (index: number, value: string) => {
     setAddon((a) => {
@@ -113,11 +117,11 @@ function AddonDetailsView({ addonId }: { addonId: string }) {
     e.preventDefault();
     const filteredFeatures = addon.features.map((f) => f.trim()).filter(Boolean);
     if (!addon.name.trim()) {
-      alert("Name is required.");
+      toast.error("Name is required.");
       return;
     }
     if (filteredFeatures.length === 0) {
-      alert("Add at least one feature.");
+      toast.error("Add at least one feature.");
       return;
     }
     const payload = {
@@ -138,31 +142,37 @@ function AddonDetailsView({ addonId }: { addonId: string }) {
         payload,
       );
       if (result.success === false) {
-        alert(result.message || "Failed to update add-on.");
+        toast.error(result.message || "Failed to update add-on.");
         return;
       }
       router.push("/subscriptions?category=addon");
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Error updating add-on.");
+      toast.error(err instanceof Error ? err.message : "Error updating add-on.");
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!confirm("Delete this add-on service?")) return;
+    const ok = await askConfirm({
+      title: "Delete add-on?",
+      message: "This permanently removes this add-on from the catalog.",
+      variant: "danger",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     setDeleting(true);
     try {
       const result = await api.delete<{ success?: boolean; message?: string }>(
         `/api/v1/super-admin/addon-services/${addonId}`,
       );
       if (result.success === false) {
-        alert(result.message || "Failed to delete add-on.");
+        toast.error(result.message || "Failed to delete add-on.");
         return;
       }
       router.push("/subscriptions?category=addon");
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Error deleting add-on.");
+      toast.error(err instanceof Error ? err.message : "Error deleting add-on.");
     } finally {
       setDeleting(false);
     }
@@ -497,6 +507,8 @@ function AddonDetailsView({ addonId }: { addonId: string }) {
 
 function PlanDetailsView({ planId }: { planId: string }) {
   const router = useRouter();
+  const toast = useToast();
+  const askConfirm = useConfirm();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -572,25 +584,32 @@ function PlanDetailsView({ planId }: { planId: string }) {
         { ...plan, features: filteredFeatures },
       );
       if (result.success) router.push("/subscriptions");
-      else alert(result.message || "Failed to update plan");
+      else toast.error(result.message || "Failed to update plan");
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Error updating plan");
+      toast.error(err instanceof Error ? err.message : "Error updating plan");
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!confirm("Are you sure?")) return;
+    const ok = await askConfirm({
+      title: "Delete subscription tier?",
+      message:
+        "This permanently removes this plan from the platform. This cannot be undone.",
+      variant: "danger",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     setDeleting(true);
     try {
       const result = await api.delete(
         `/api/v1/super-admin/subscription/plans/${planId}`,
       );
       if (result.success) router.push("/subscriptions");
-      else alert(result.message);
+      else toast.error(result.message || "Failed to delete plan");
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Error deleting plan");
+      toast.error(err instanceof Error ? err.message : "Error deleting plan");
     } finally {
       setDeleting(false);
     }

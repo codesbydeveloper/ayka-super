@@ -16,6 +16,7 @@ import {
   X
 } from 'lucide-react';
 import StatCard from '@/app/components/ui/StatCard';
+import { useToast } from '@/components/ToastProvider';
 import { api } from '@/utils/api';
 import { buildAndDownloadRevenueReportPdf } from '@/utils/revenueReportPdf';
 import '../dashboard/Dashboard.css';
@@ -137,6 +138,56 @@ type BillingTxRow = {
   is_override?: boolean;
 };
 
+/** Rows from GET /billing/transactions/override (administrative overrides only). */
+type OverrideTxRow = {
+  rowKey: string;
+  transaction_id: string;
+  receipt_number: string;
+  clinic_name: string;
+  amount: number;
+  tax_deduction: number;
+  net_amount: number;
+  category: string;
+  payment_method: string;
+  doctor_name: string;
+  patient_name: string;
+  processed_by: string;
+  transaction_date: string;
+  description: string;
+};
+
+function normalizeOverrideListItem(
+  raw: unknown,
+  index: number,
+): OverrideTxRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const tid = String(o.transaction_id ?? "").trim();
+  const rowKey = `${tid || "row"}-${index}`;
+  return {
+    rowKey,
+    transaction_id: tid || "—",
+    receipt_number: String(o.receipt_number ?? "—"),
+    clinic_name: String(o.clinic_name ?? "—"),
+    amount: typeof o.amount === "number" ? o.amount : Number(o.amount) || 0,
+    tax_deduction:
+      typeof o.tax_deduction === "number"
+        ? o.tax_deduction
+        : Number(o.tax_deduction) || 0,
+    net_amount:
+      typeof o.net_amount === "number"
+        ? o.net_amount
+        : Number(o.net_amount) || 0,
+    category: String(o.category ?? "—"),
+    payment_method: String(o.payment_method ?? "—"),
+    doctor_name: o.doctor_name != null ? String(o.doctor_name) : "—",
+    patient_name: o.patient_name != null ? String(o.patient_name) : "—",
+    processed_by: String(o.processed_by ?? "—"),
+    transaction_date: String(o.transaction_date ?? ""),
+    description: String(o.description ?? ""),
+  };
+}
+
 function normalizeBillingTransactionItem(
   raw: unknown,
   index: number,
@@ -213,6 +264,7 @@ function applyBillingSummaryToStats(
 }
 
 export default function BillingPage() {
+  const toast = useToast();
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportFromDate, setReportFromDate] = useState("");
   const [reportToDate, setReportToDate] = useState("");
@@ -283,6 +335,21 @@ export default function BillingPage() {
   const [selectedClinic, setSelectedClinic] = useState<string>('');
   const [planType, setPlanType] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<string>('');
+
+  /** Platform table vs GET /billing/transactions/override list */
+  const [billingTableMode, setBillingTableMode] = useState<
+    "platform" | "overrides"
+  >("platform");
+  const [overrideRows, setOverrideRows] = useState<OverrideTxRow[]>([]);
+  const [ovLoading, setOvLoading] = useState(false);
+  const [ovPage, setOvPage] = useState(1);
+  const [ovPages, setOvPages] = useState(1);
+  const [ovTotal, setOvTotal] = useState(0);
+  const ovPerPage = 20;
+  const [ovCategory, setOvCategory] = useState("");
+  const [ovPaymentFilter, setOvPaymentFilter] = useState("");
+  const [ovFromDate, setOvFromDate] = useState("");
+  const [ovToDate, setOvToDate] = useState("");
 
   // New Transaction Form State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -401,20 +468,99 @@ export default function BillingPage() {
     ],
   );
 
+  const loadOverrideTransactions = useCallback(
+    async (page: number) => {
+      setOvLoading(true);
+      try {
+        const queryParams = new URLSearchParams({
+          page: String(page),
+          per_page: String(ovPerPage),
+        });
+        if (selectedClinic)
+          queryParams.set("clinic_id", selectedClinic);
+        if (ovCategory.trim())
+          queryParams.set("category", ovCategory.trim().toLowerCase());
+        if (ovPaymentFilter.trim())
+          queryParams.set("payment_method", ovPaymentFilter.trim());
+        if (ovFromDate.trim()) queryParams.set("from_date", ovFromDate.trim());
+        if (ovToDate.trim()) queryParams.set("to_date", ovToDate.trim());
+
+        const result = (await api.get(
+          `${billingTransactionOverridePath()}?${queryParams}`,
+        )) as {
+          success?: boolean;
+          data?: Record<string, unknown>;
+        };
+
+        if (result?.success && result.data && typeof result.data === "object") {
+          const d = result.data;
+          const items = Array.isArray(d.items) ? d.items : [];
+          const rows = items
+            .map((item, i) => normalizeOverrideListItem(item, i))
+            .filter((x): x is OverrideTxRow => x != null);
+          setOverrideRows(rows);
+          setOvPage(
+            typeof d.page === "number" ? d.page : Number(d.page) || page,
+          );
+          setOvPages(
+            Math.max(
+              1,
+              typeof d.pages === "number" ? d.pages : Number(d.pages) || 1,
+            ),
+          );
+          setOvTotal(
+            typeof d.total === "number"
+              ? d.total
+              : Number(d.total) || rows.length,
+          );
+        } else {
+          setOverrideRows([]);
+          setOvPages(1);
+          setOvTotal(0);
+        }
+      } catch (err: unknown) {
+        console.error("Fetch override transactions error:", err);
+        setOverrideRows([]);
+        setOvPages(1);
+        setOvTotal(0);
+      } finally {
+        setOvLoading(false);
+      }
+    },
+    [
+      selectedClinic,
+      ovCategory,
+      ovPaymentFilter,
+      ovFromDate,
+      ovToDate,
+      ovPerPage,
+    ],
+  );
+
   useEffect(() => {
     void loadBillingTransactions(1);
-
   }, []);
 
   const fetchPayments = useCallback(() => {
     void loadBillingTransactions(1);
   }, [loadBillingTransactions]);
 
+  const fetchOverrides = useCallback(() => {
+    void loadOverrideTransactions(1);
+  }, [loadOverrideTransactions]);
+
   const goTxPage = useCallback(
     (p: number) => {
       void loadBillingTransactions(p);
     },
     [loadBillingTransactions],
+  );
+
+  const goOvPage = useCallback(
+    (p: number) => {
+      void loadOverrideTransactions(p);
+    },
+    [loadOverrideTransactions],
   );
 
   useEffect(() => {
@@ -515,11 +661,11 @@ export default function BillingPage() {
   const handleCreateTxn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!txnData.clinic_id || !Number.isFinite(txnData.clinic_id)) {
-      alert("Select a clinic for this record.");
+      toast.error("Select a clinic for this record.");
       return;
     }
     if (!(txnData.amount > 0)) {
-      alert("Enter a transaction amount greater than zero.");
+      toast.error("Enter a transaction amount greater than zero.");
       return;
     }
     setCreating(true);
@@ -545,7 +691,7 @@ export default function BillingPage() {
       };
 
       if (result && result.success === false) {
-        alert(
+        toast.error(
           typeof result.message === "string"
             ? result.message
             : "Record was not accepted.",
@@ -553,7 +699,7 @@ export default function BillingPage() {
         return;
       }
 
-      alert(
+      toast.success(
         typeof result.message === "string" && result.message
           ? result.message
           : "Administrative record created successfully.",
@@ -562,8 +708,9 @@ export default function BillingPage() {
       setTxnData(initialTxnOverride());
       void fetchBillingSummary();
       fetchPayments();
+      void loadOverrideTransactions(1);
     } catch (err: unknown) {
-      alert(
+      toast.error(
         err instanceof Error
           ? err.message
           : "Record submission failed. Please try again.",
@@ -616,187 +763,480 @@ export default function BillingPage() {
 
       <div className="card table-card billing-table-card">
         <div className="table-filters-premium">
-          <div className="filter-left">
-            <h3 className="card-title">Transaction History</h3>
+          <div
+            className="filter-left"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <h3 className="card-title" style={{ margin: 0 }}>
+              Transaction History
+            </h3>
+            <div
+              className="billing-mode-toggle"
+              style={{
+                display: "inline-flex",
+                borderRadius: 10,
+                border: "1px solid var(--border-light, #e2e8f0)",
+                overflow: "hidden",
+                background: "#f1f5f9",
+              }}
+              role="tablist"
+              aria-label="Transaction source"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={billingTableMode === "platform"}
+                className={
+                  billingTableMode === "platform"
+                    ? "btn btn-primary"
+                    : "btn btn-secondary"
+                }
+                style={{
+                  borderRadius: 0,
+                  border: "none",
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+                onClick={() => {
+                  setBillingTableMode("platform");
+                  void loadBillingTransactions(1);
+                }}
+              >
+                Platform & subscriptions
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={billingTableMode === "overrides"}
+                className={
+                  billingTableMode === "overrides"
+                    ? "btn btn-primary"
+                    : "btn btn-secondary"
+                }
+                style={{
+                  borderRadius: 0,
+                  border: "none",
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+                onClick={() => {
+                  setBillingTableMode("overrides");
+                  void loadOverrideTransactions(1);
+                }}
+              >
+                Administrative overrides
+              </button>
+            </div>
           </div>
           <div className="filter-right">
-             <div className="search-bar-mini">
-                <Search size={16} />
-                <input 
-                  type="text" 
-                  placeholder="Order ID or Clinic..." 
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+            {billingTableMode === "platform" ? (
+              <>
+                <div className="search-bar-mini">
+                  <Search size={16} />
+                  <input
+                    type="text"
+                    placeholder="Order ID or Clinic..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <select
+                  className="modern-select-mini"
+                  value={planType}
+                  onChange={(e) => setPlanType(e.target.value)}
+                  style={{ minWidth: "140px" }}
+                >
+                  <option value="">All plan types</option>
+                  <option value="Clinic">Clinic</option>
+                  <option value="Expert">Expert</option>
+                  <option value="Individual">Individual</option>
+                  <option value="Add On">Add On</option>
+                </select>
+                <select
+                  className="modern-select-mini"
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  style={{ minWidth: "130px" }}
+                >
+                  <option value="">All methods</option>
+                  <option value="razorpay">Razorpay</option>
+                  <option value="bank_transfer">Bank transfer</option>
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI</option>
+                </select>
+                <select
+                  className="modern-select-mini"
+                  value={subStatus}
+                  onChange={(e) => setSubStatus(e.target.value)}
+                  style={{ minWidth: "120px" }}
+                >
+                  <option value="">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="pending">Pending</option>
+                  <option value="expired">Expired</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <select
+                  className="modern-select-mini"
+                  value={selectedClinic}
+                  onChange={(e) => setSelectedClinic(e.target.value)}
+                  style={{ minWidth: "150px" }}
+                >
+                  <option value="">All Centers</option>
+                  {clinics.map((clinic: { id: number; name: string }) => (
+                    <option key={clinic.id} value={clinic.id}>
+                      {clinic.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn-icon-sq-mini"
+                  title="Apply filters"
+                  onClick={() => void fetchPayments()}
+                >
+                  <Filter size={16} />
+                </button>
+              </>
+            ) : (
+              <>
+                <select
+                  className="modern-select-mini"
+                  value={selectedClinic}
+                  onChange={(e) => setSelectedClinic(e.target.value)}
+                  style={{ minWidth: "150px" }}
+                >
+                  <option value="">All centers</option>
+                  {clinics.map((clinic: { id: number; name: string }) => (
+                    <option key={clinic.id} value={clinic.id}>
+                      {clinic.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="modern-select-mini"
+                  value={ovCategory}
+                  onChange={(e) => setOvCategory(e.target.value)}
+                  style={{ minWidth: "140px" }}
+                >
+                  <option value="">All categories</option>
+                  <option value="consultation">Consultation</option>
+                  <option value="procedure">Procedure</option>
+                  <option value="test">Test</option>
+                  <option value="medicine">Medicine</option>
+                  <option value="other">Other</option>
+                </select>
+                <select
+                  className="modern-select-mini"
+                  value={ovPaymentFilter}
+                  onChange={(e) => setOvPaymentFilter(e.target.value)}
+                  style={{ minWidth: "140px" }}
+                >
+                  <option value="">All payment methods</option>
+                  <option value="cash_override">Cash override</option>
+                  <option value="upi">UPI</option>
+                  <option value="cash">Cash</option>
+                  <option value="bank_transfer">Bank transfer</option>
+                  <option value="card">Card</option>
+                </select>
+                <input
+                  type="date"
+                  className="modern-select-mini"
+                  value={ovFromDate}
+                  onChange={(e) => setOvFromDate(e.target.value)}
+                  title="From date"
+                  style={{ minWidth: "130px" }}
                 />
-             </div>
-            <select 
-              className="modern-select-mini"
-              value={planType}
-              onChange={(e) => setPlanType(e.target.value)}
-              style={{ minWidth: '140px' }}
-            >
-              <option value="">All plan types</option>
-              <option value="Clinic">Clinic</option>
-              <option value="Expert">Expert</option>
-              <option value="Individual">Individual</option>
-              <option value="Add On">Add On</option>
-            </select>
-            <select 
-              className="modern-select-mini"
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-              style={{ minWidth: '130px' }}
-            >
-              <option value="">All methods</option>
-              <option value="razorpay">Razorpay</option>
-              <option value="bank_transfer">Bank transfer</option>
-              <option value="cash">Cash</option>
-              <option value="upi">UPI</option>
-            </select>
-            <select 
-              className="modern-select-mini"
-              value={subStatus}
-              onChange={(e) => setSubStatus(e.target.value)}
-              style={{ minWidth: '120px' }}
-            >
-              <option value="">All statuses</option>
-              <option value="active">Active</option>
-              <option value="pending">Pending</option>
-              <option value="expired">Expired</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-            <select 
-              className="modern-select-mini"
-              value={selectedClinic}
-              onChange={(e) => setSelectedClinic(e.target.value)}
-              style={{ minWidth: '150px' }}
-            >
-              <option value="">All Centers</option>
-              {clinics.map((clinic: any) => (
-                <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
-              ))}
-            </select>
-            <button type="button" className="btn-icon-sq-mini" title="Apply filters" onClick={() => void fetchPayments()}>
-               <Filter size={16} />
-            </button>
+                <input
+                  type="date"
+                  className="modern-select-mini"
+                  value={ovToDate}
+                  onChange={(e) => setOvToDate(e.target.value)}
+                  title="To date"
+                  style={{ minWidth: "130px" }}
+                />
+                <button
+                  type="button"
+                  className="btn-icon-sq-mini"
+                  title="Apply filters"
+                  onClick={() => void fetchOverrides()}
+                >
+                  <Filter size={16} />
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         <div className="table-responsive">
-          <table className="premium-data-table">
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Medical Center</th>
-                <th>Amount</th>
-                <th>Plan Tier</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Receipt</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
+          {billingTableMode === "platform" ? (
+            <table className="premium-data-table">
+              <thead>
                 <tr>
-                  <td colSpan={7} style={{ padding: '60px 0', textAlign: 'center' }}>
-                    <Loader2 className="animate-spin" size={32} color="var(--primary)" />
-                  </td>
+                  <th>Order ID</th>
+                  <th>Medical Center</th>
+                  <th>Amount</th>
+                  <th>Plan Tier</th>
+                  <th>Date</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: "right" }}>Receipt</th>
                 </tr>
-              ) : payments.length > 0 ? (
-                payments.map((payment) => {
-                  const st = payment.status;
-                  const badgeClass =
-                    st === "active"
-                      ? "success"
-                      : st === "expired" || st === "cancelled"
-                        ? "danger"
-                        : st === "pending"
-                          ? "warning"
-                          : "warning";
-                  const planLabel =
-                    payment.plan_category &&
-                    payment.plan_tier &&
-                    payment.plan_category !== payment.plan_tier
-                      ? `${payment.plan_tier} · ${payment.plan_category}`
-                      : payment.plan_tier;
-                  return (
-                  <tr key={payment.rowKey}>
-                    <td className="txn-id-cell" title={payment.order_id}>
-                      {payment.order_id.length > 18
-                        ? `${payment.order_id.slice(0, 14)}…`
-                        : payment.order_id}
-                      {payment.is_override ? (
-                        <span className="plan-badge-mini" style={{ marginLeft: 8 }}>
-                          Override
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="clinic-name-cell">{payment.medical_center}</td>
-                    <td className="amount-cell">₹{payment.amount.toFixed(2)}</td>
-                    <td><span className="plan-badge-mini">{planLabel}</span></td>
-                    <td className="date-cell">
-                      {payment.date
-                        ? new Date(payment.date).toLocaleString()
-                        : "N/A"}
-                    </td>
-                    <td>
-                      <span className={`badge-status badge-${badgeClass}`}>
-                        {payment.status}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)', marginRight: 8 }}>
-                        {payment.receipt ?? "—"}
-                      </span>
-                      <button type="button" className="btn-icon-flat" title="Receipt reference">
-                        <FileText size={18} />
-                      </button>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      style={{ padding: "60px 0", textAlign: "center" }}
+                    >
+                      <Loader2
+                        className="animate-spin"
+                        size={32}
+                        color="var(--primary)"
+                      />
                     </td>
                   </tr>
-                  );
-                })
-              ) : (
+                ) : payments.length > 0 ? (
+                  payments.map((payment) => {
+                    const st = payment.status;
+                    const badgeClass =
+                      st === "active"
+                        ? "success"
+                        : st === "expired" || st === "cancelled"
+                          ? "danger"
+                          : st === "pending"
+                            ? "warning"
+                            : "warning";
+                    const planLabel =
+                      payment.plan_category &&
+                      payment.plan_tier &&
+                      payment.plan_category !== payment.plan_tier
+                        ? `${payment.plan_tier} · ${payment.plan_category}`
+                        : payment.plan_tier;
+                    return (
+                      <tr key={payment.rowKey}>
+                        <td className="txn-id-cell" title={payment.order_id}>
+                          {payment.order_id.length > 18
+                            ? `${payment.order_id.slice(0, 14)}…`
+                            : payment.order_id}
+                          {payment.is_override ? (
+                            <span
+                              className="plan-badge-mini"
+                              style={{ marginLeft: 8 }}
+                            >
+                              Override
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="clinic-name-cell">
+                          {payment.medical_center}
+                        </td>
+                        <td className="amount-cell">
+                          ₹{payment.amount.toFixed(2)}
+                        </td>
+                        <td>
+                          <span className="plan-badge-mini">{planLabel}</span>
+                        </td>
+                        <td className="date-cell">
+                          {payment.date
+                            ? new Date(payment.date).toLocaleString()
+                            : "N/A"}
+                        </td>
+                        <td>
+                          <span className={`badge-status badge-${badgeClass}`}>
+                            {payment.status}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              color: "var(--text-muted)",
+                              marginRight: 8,
+                            }}
+                          >
+                            {payment.receipt ?? "—"}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-icon-flat"
+                            title="Receipt reference"
+                          >
+                            <FileText size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      style={{
+                        padding: "60px 0",
+                        textAlign: "center",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      No transactions found matching your criteria.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <table className="premium-data-table">
+              <thead>
                 <tr>
-                  <td colSpan={7} style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    No transactions found matching your criteria.
-                  </td>
+                  <th>Transaction</th>
+                  <th>Receipt</th>
+                  <th>Medical center</th>
+                  <th>Net</th>
+                  <th>Category</th>
+                  <th>Method</th>
+                  <th>Doctor</th>
+                  <th>Patient</th>
+                  <th>Processed by</th>
+                  <th>Date</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {ovLoading ? (
+                  <tr>
+                    <td
+                      colSpan={10}
+                      style={{ padding: "60px 0", textAlign: "center" }}
+                    >
+                      <Loader2
+                        className="animate-spin"
+                        size={32}
+                        color="var(--primary)"
+                      />
+                    </td>
+                  </tr>
+                ) : overrideRows.length > 0 ? (
+                  overrideRows.map((row) => (
+                    <tr key={row.rowKey}>
+                      <td
+                        className="txn-id-cell"
+                        title={
+                          row.description
+                            ? `${row.transaction_id} — ${row.description}`
+                            : row.transaction_id
+                        }
+                      >
+                        {row.transaction_id.length > 14
+                          ? `${row.transaction_id.slice(0, 12)}…`
+                          : row.transaction_id}
+                      </td>
+                      <td style={{ fontSize: 12 }}>{row.receipt_number}</td>
+                      <td className="clinic-name-cell">{row.clinic_name}</td>
+                      <td className="amount-cell">
+                        ₹{row.net_amount.toFixed(2)}
+                        <span
+                          style={{
+                            display: "block",
+                            fontSize: 11,
+                            color: "var(--text-muted)",
+                          }}
+                        >
+                          Gross ₹{row.amount.toFixed(2)} · Tax ₹
+                          {row.tax_deduction.toFixed(2)}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="plan-badge-mini">{row.category}</span>
+                      </td>
+                      <td style={{ fontSize: 12 }}>{row.payment_method}</td>
+                      <td style={{ fontSize: 12 }}>{row.doctor_name}</td>
+                      <td style={{ fontSize: 12 }}>{row.patient_name}</td>
+                      <td style={{ fontSize: 12 }}>{row.processed_by}</td>
+                      <td className="date-cell">
+                        {row.transaction_date
+                          ? new Date(row.transaction_date).toLocaleString()
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td
+                      colSpan={10}
+                      style={{
+                        padding: "60px 0",
+                        textAlign: "center",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      No administrative overrides yet, or nothing matches your
+                      filters. Create one with &quot;Administrative Transaction
+                      Override&quot;.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
 
         <div
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
             gap: 12,
-            padding: '16px 32px',
-            borderTop: '1px solid var(--border-light)',
-            background: 'var(--gray-50, #f8fafc)',
+            padding: "16px 32px",
+            borderTop: "1px solid var(--border-light)",
+            background: "var(--gray-50, #f8fafc)",
           }}
         >
-          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {txTotal > 0
-              ? `${txTotal} record${txTotal === 1 ? '' : 's'} · Page ${txPage} of ${txPages}`
-              : 'No records'}
+          <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+            {billingTableMode === "platform"
+              ? txTotal > 0
+                ? `${txTotal} record${txTotal === 1 ? "" : "s"} · Page ${txPage} of ${txPages}`
+                : "No records"
+              : ovTotal > 0
+                ? `${ovTotal} override${ovTotal === 1 ? "" : "s"} · Page ${ovPage} of ${ovPages}`
+                : "No records"}
           </span>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={loading || txPage <= 1}
-              onClick={() => goTxPage(txPage - 1)}
+              disabled={
+                billingTableMode === "platform"
+                  ? loading || txPage <= 1
+                  : ovLoading || ovPage <= 1
+              }
+              onClick={() =>
+                billingTableMode === "platform"
+                  ? goTxPage(txPage - 1)
+                  : goOvPage(ovPage - 1)
+              }
             >
               Previous
             </button>
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={loading || txPage >= txPages}
-              onClick={() => goTxPage(txPage + 1)}
+              disabled={
+                billingTableMode === "platform"
+                  ? loading || txPage >= txPages
+                  : ovLoading || ovPage >= ovPages
+              }
+              onClick={() =>
+                billingTableMode === "platform"
+                  ? goTxPage(txPage + 1)
+                  : goOvPage(ovPage + 1)
+              }
             >
               Next
             </button>

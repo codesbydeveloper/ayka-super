@@ -31,6 +31,8 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
+import { useConfirm } from '@/components/ConfirmDialog';
 import '../Leads.css';
 
 function clinicLeadsBase(): string {
@@ -332,6 +334,8 @@ export default function ClinicLeadsPage() {
   const [deleteError, setDeleteError] = useState('');
 
   const router = useRouter();
+  const toast = useToast();
+  const askConfirm = useConfirm();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
@@ -511,7 +515,7 @@ export default function ClinicLeadsPage() {
       }
 
       if (all.length === 0) {
-        window.alert('No clinic leads to export for the current filters.');
+        toast.info("No clinic leads to export for the current filters.");
         return;
       }
 
@@ -583,38 +587,53 @@ export default function ClinicLeadsPage() {
       const date = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, `clinic-leads-${date}.xlsx`);
     } catch (e: unknown) {
-      console.error('Clinic leads Excel export failed:', e);
-      window.alert(
-        e instanceof Error ? e.message : 'Could not generate the Excel file.',
+      console.error("Clinic leads Excel export failed:", e);
+      toast.error(
+        e instanceof Error ? e.message : "Could not generate the Excel file.",
       );
     } finally {
       setExportingExcel(false);
     }
-  }, [searchTerm]);
+  }, [searchTerm, toast]);
 
-  const handleDeleteClinicLead = async (lead: { id?: number | string; name?: string }) => {
+  const handleDeleteClinicLead = async (lead: {
+    id?: number | string;
+    name?: string;
+  }) => {
     const id = lead.id;
     if (id == null || deletingId != null) return;
-    const label = lead.name?.trim() || 'this clinic lead';
-    const ok = window.confirm(
-      `Delete clinic lead “${label}” from the pipeline?\n\nThis permanently removes the lead record. This cannot be undone.`,
-    );
+    const label = lead.name?.trim() || "this clinic lead";
+    const ok = await askConfirm({
+      title: "Delete clinic lead",
+      message: `Delete clinic lead “${label}” from the pipeline? This permanently removes the lead record. This cannot be undone.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
     if (!ok) return;
 
-    setDeleteError('');
+    setDeleteError("");
     setDeletingId(id);
     try {
-      await api.delete(`${clinicLeadsBase()}/${encodeURIComponent(String(id))}`);
+      await api.delete(
+        `${clinicLeadsBase()}/${encodeURIComponent(String(id))}`,
+      );
       setLeads((prev) => prev.filter((l) => String(l.id) !== String(id)));
-      setPagination((prev) => ({ ...prev, total: Math.max(0, prev.total - 1) }));
+      setPagination((prev) => ({
+        ...prev,
+        total: Math.max(0, prev.total - 1),
+      }));
       if (selectedLead != null && String(selectedLead.id) === String(id)) {
         setShowRemarksModal(false);
         setSelectedLead(null);
-        setNewRemark('');
-        setRemarkError('');
+        setNewRemark("");
+        setRemarkError("");
       }
+      toast.success("Clinic lead deleted.");
     } catch (e: unknown) {
-      setDeleteError(e instanceof Error ? e.message : 'Failed to delete clinic lead.');
+      setDeleteError(
+        e instanceof Error ? e.message : "Failed to delete clinic lead.",
+      );
     } finally {
       setDeletingId(null);
     }

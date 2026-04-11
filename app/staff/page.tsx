@@ -31,25 +31,47 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
+import { useConfirm } from '@/components/ConfirmDialog';
 import {
   fetchIndianStates,
   fetchCitiesByStateCode,
+  fetchFranchiseDistrictsByStateId,
   type IndianState,
   type IndianCity,
 } from '@/utils/locations';
 import '../dashboard/Dashboard.css';
 import './Staff.css';
 
+/** City row with its state for building nested `territories` payloads. */
+type FranchiseCityOption = IndianCity & { state_code: string };
+
+/** District row from GET /super-admin/franchises/districts for create-franchise UI. */
+type FranchiseDistrictOption = {
+  state_id: number;
+  state_code: string;
+  id: number;
+  name: string;
+};
+
+type FranchiseDistrictPick = { state_id: number; district_id: number };
+
 async function fetchCitiesMergedForStateCodes(
   codes: string[],
-): Promise<IndianCity[]> {
+): Promise<FranchiseCityOption[]> {
   if (codes.length === 0) return [];
   const lists = await Promise.all(
     codes.map((code) =>
-      fetchCitiesByStateCode(code).catch(() => [] as IndianCity[]),
+      fetchCitiesByStateCode(code)
+        .then((list) =>
+          list.map(
+            (c): FranchiseCityOption => ({ ...c, state_code: code }),
+          ),
+        )
+        .catch(() => [] as FranchiseCityOption[]),
     ),
   );
-  const byId = new Map<number, IndianCity>();
+  const byId = new Map<number, FranchiseCityOption>();
   for (const list of lists) {
     for (const c of list) {
       if (!byId.has(c.id)) byId.set(c.id, c);
@@ -261,9 +283,6 @@ type FranchiseFormState = {
   owner_email: string;
   owner_phone: string;
   level: FranchiseLevel;
-  /** Used when the locations API does not include numeric state ids */
-  state_id_manual: string;
-  district_id: string;
   address: string;
   pin_code: string;
   business_registration_number: string;
@@ -271,8 +290,6 @@ type FranchiseFormState = {
   pan_number: string;
   commission_percentage: string;
   description: string;
-  /** Comma-separated backend district IDs for bulk assign (state-level franchises) */
-  bulk_district_ids: string;
 };
 
 const initialFranchiseForm = (): FranchiseFormState => ({
@@ -284,8 +301,6 @@ const initialFranchiseForm = (): FranchiseFormState => ({
   owner_email: "",
   owner_phone: "",
   level: "state",
-  state_id_manual: "",
-  district_id: "",
   address: "",
   pin_code: "",
   business_registration_number: "",
@@ -293,57 +308,189 @@ const initialFranchiseForm = (): FranchiseFormState => ({
   pan_number: "",
   commission_percentage: "10",
   description: "",
-  bulk_district_ids: "",
 });
 
-function parseCommaSeparatedPositiveInts(raw: string): number[] {
-  const seen = new Set<number>();
-  const out: number[] = [];
-  for (const part of raw.split(/[,;\s]+/)) {
-    const t = part.trim();
-    if (!t) continue;
-    const n = Number(t);
-    if (Number.isFinite(n) && n > 0 && !seen.has(n)) {
-      seen.add(n);
-      out.push(Math.trunc(n));
+type FranchiseTerritoryDistrict = {
+  district_id: number;
+  city_ids: number[];
+};
+
+type FranchiseTerritoryState = {
+  state_id: number;
+  districts: FranchiseTerritoryDistrict[];
+};
+
+/**
+ * Builds `territories` for POST /api/v1/super-admin/franchises/franchises.
+ * Backend rules (auto-derives multi_state / state / district / city):
+ * - `districts: []` → whole state
+ * - `city_ids: []` under a district → whole district
+ * - City rows must belong to their district + state (validated server-side).
+ *
+ * UI "Franchise level" only drives how we fill this shape; we do not send `level` in JSON.
+ */
+function buildFranchiseTerritories(
+  level: FranchiseLevel,
+  selectedStateCodes: string[],
+  locationStates: IndianState[],
+  selectedCityIds: number[],
+  citiesList: FranchiseCityOption[],
+  districtPicks: FranchiseDistrictPick[] | null,
+):
+  | { ok: true; territories: FranchiseTerritoryState[] }
+  | { ok: false; message: string } {
+  const cityById = new Map(citiesList.map((c) => [c.id, c]));
+  const stateIdByCode = new Map<string, number>();
+  for (const code of selectedStateCodes) {
+    const s = locationStates.find((x) => x.code === code);
+    if (s?.id == null || !Number.isFinite(s.id)) {
+      return {
+        ok: false,
+        message: `State "${code}" has no numeric ID in the directory. The locations API must return an id for each state.`,
+      };
+    }
+    stateIdByCode.set(code, s.id);
+  }
+
+  if (level === "state") {
+    const territories: FranchiseTerritoryState[] = selectedStateCodes.map(
+      (code) => ({
+        state_id: stateIdByCode.get(code)!,
+        districts: [],
+      }),
+    );
+    return { ok: true, territories };
+  }
+
+  if (level === "district") {
+    if (!districtPicks || districtPicks.length === 0) {
+      return {
+        ok: false,
+        message:
+          "Select at least one district in each selected state (from the franchise districts list).",
+      };
+    }
+    const byState = new Map<number, Set<number>>();
+    for (const p of districtPicks) {
+      if (!byState.has(p.state_id)) byState.set(p.state_id, new Set());
+      byState.get(p.state_id)!.add(p.district_id);
+    }
+    for (const code of selectedStateCodes) {
+      const sid = stateIdByCode.get(code);
+      if (sid == null) continue;
+      const set = byState.get(sid);
+      if (!set || set.size === 0) {
+        return {
+          ok: false,
+          message:
+            "Select at least one district in each selected state (from the franchise districts list).",
+        };
+      }
+    }
+    const territories: FranchiseTerritoryState[] = selectedStateCodes.map(
+      (code) => {
+        const sid = stateIdByCode.get(code)!;
+        const dset = byState.get(sid) ?? new Set<number>();
+        return {
+          state_id: sid,
+          districts: [...dset].map((did) => ({
+            district_id: did,
+            city_ids: [] as number[],
+          })),
+        };
+      },
+    );
+    return { ok: true, territories };
+  }
+
+  if (level === "city") {
+  if (selectedCityIds.length === 0) {
+    return {
+      ok: false,
+      message: "Select at least one city.",
+    };
+  }
+
+  const selectedCities = selectedCityIds
+    .map((id) => cityById.get(id))
+    .filter((c): c is FranchiseCityOption => c != null);
+
+  if (selectedCities.length !== selectedCityIds.length) {
+    return {
+      ok: false,
+      message: "Some selected cities are no longer valid. Refresh and try again.",
+    };
+  }
+
+  const statesFromCities = new Set(selectedCities.map((c) => c.state_code));
+  for (const code of selectedStateCodes) {
+    if (!statesFromCities.has(code)) {
+      return {
+        ok: false,
+        message:
+          "For city level, pick at least one city in every selected state.",
+      };
     }
   }
-  return out;
-}
 
-function franchiseIdFromCreateResponse(payload: unknown): number | null {
-  if (!payload || typeof payload !== "object") return null;
-  const r = payload as Record<string, unknown>;
-  const tryId = (v: unknown): number | null => {
-    if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
-    if (typeof v === "string" && v.trim() !== "") {
-      const n = Number(v);
-      if (Number.isFinite(n) && n > 0) return n;
+  const groups = new Map<
+    string,
+    { state_id: number; district_id: number; city_ids: number[] }
+  >();
+  for (const c of selectedCities) {
+    if (c.district_id == null || !Number.isFinite(c.district_id)) {
+      return {
+        ok: false,
+        message:
+          "Each city must include district_id from the locations API for city-level franchises.",
+      };
     }
-    return null;
+    const sid = stateIdByCode.get(c.state_code)!;
+    const key = `${sid}:${c.district_id}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        state_id: sid,
+        district_id: c.district_id,
+        city_ids: [],
+      });
+    }
+    groups.get(key)!.city_ids.push(c.id);
+  }
+
+  const districtsByStateId = new Map<number, FranchiseTerritoryDistrict[]>();
+  for (const g of groups.values()) {
+    if (!districtsByStateId.has(g.state_id)) {
+      districtsByStateId.set(g.state_id, []);
+    }
+    districtsByStateId.get(g.state_id)!.push({
+      district_id: g.district_id,
+      city_ids: g.city_ids,
+    });
+  }
+
+  const territories: FranchiseTerritoryState[] = selectedStateCodes.map(
+    (code) => {
+      const sid = stateIdByCode.get(code)!;
+      return {
+        state_id: sid,
+        districts: districtsByStateId.get(sid) ?? [],
+      };
+    },
+  );
+  return { ok: true, territories };
+  }
+
+  return {
+    ok: false,
+    message: "Unsupported franchise level.",
   };
-  const id = tryId(r.id);
-  if (id != null) return id;
-  const data = r.data;
-  if (data && typeof data === "object") {
-    const id2 = tryId((data as Record<string, unknown>).id);
-    if (id2 != null) return id2;
-  }
-  const franchise = r.franchise;
-  if (franchise && typeof franchise === "object") {
-    const id3 = tryId((franchise as Record<string, unknown>).id);
-    if (id3 != null) return id3;
-  }
-  return null;
 }
 
+/** Body for POST /api/v1/super-admin/franchises/franchises — matches multi-state / district / city territory schema. */
 function buildCreateFranchisePayload(
   form: FranchiseFormState,
-  resolvedStateId: number,
-  selectedCityId: number | null,
+  territories: FranchiseTerritoryState[],
 ): Record<string, unknown> {
-  const level = form.level;
-  const districtNum = Number(form.district_id.replace(/\s/g, ""));
   const commission = Number(form.commission_percentage);
 
   return {
@@ -354,16 +501,6 @@ function buildCreateFranchisePayload(
     owner_name: form.owner_name.trim(),
     owner_email: form.owner_email.trim(),
     owner_phone: form.owner_phone.replace(/\s/g, ""),
-    level,
-    state_id: resolvedStateId,
-    district_id:
-      level === "district" && Number.isFinite(districtNum) ? districtNum : null,
-    city_id:
-      (level === "city" || level === "district") &&
-      selectedCityId != null &&
-      Number.isFinite(selectedCityId)
-        ? selectedCityId
-        : null,
     address: form.address.trim(),
     pin_code: form.pin_code.trim(),
     business_registration_number: form.business_registration_number.trim(),
@@ -371,6 +508,7 @@ function buildCreateFranchisePayload(
     pan_number: form.pan_number.trim(),
     commission_percentage: Number.isFinite(commission) ? commission : 0,
     description: form.description.trim(),
+    territories,
     permissions: {},
   };
 }
@@ -452,6 +590,8 @@ function normalizeStaffRow(raw: unknown): AdminUser | null {
 
 export default function StaffPage() {
   const router = useRouter();
+  const toast = useToast();
+  const askConfirm = useConfirm();
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [hierarchyTab, setHierarchyTab] = useState<HierarchyTab>("roles");
@@ -520,9 +660,9 @@ export default function StaffPage() {
   const [franchiseStateDropdownOpen, setFranchiseStateDropdownOpen] =
     useState(false);
   const franchiseStateDropdownRef = useRef<HTMLDivElement>(null);
-  const [franchiseCitiesList, setFranchiseCitiesList] = useState<IndianCity[]>(
-    [],
-  );
+  const [franchiseCitiesList, setFranchiseCitiesList] = useState<
+    FranchiseCityOption[]
+  >([]);
   const [franchiseCitiesLoading, setFranchiseCitiesLoading] = useState(false);
   const [franchiseSelectedCityIds, setFranchiseSelectedCityIds] = useState<
     number[]
@@ -530,6 +670,16 @@ export default function StaffPage() {
   const [franchiseCityDropdownOpen, setFranchiseCityDropdownOpen] =
     useState(false);
   const franchiseCityDropdownRef = useRef<HTMLDivElement>(null);
+  const [franchiseDistrictOptions, setFranchiseDistrictOptions] = useState<
+    FranchiseDistrictOption[]
+  >([]);
+  const [franchiseDistrictsLoading, setFranchiseDistrictsLoading] =
+    useState(false);
+  const [franchiseSelectedDistrictKeys, setFranchiseSelectedDistrictKeys] =
+    useState<string[]>([]);
+  const [franchiseDistrictDropdownOpen, setFranchiseDistrictDropdownOpen] =
+    useState(false);
+  const franchiseDistrictDropdownRef = useRef<HTMLDivElement>(null);
 
   const togglePermission = (key: keyof CreateStaffPermissions) => {
     setFormData(prev => ({
@@ -596,7 +746,14 @@ export default function StaffPage() {
 
   const handleDeleteFranchise = async (f: FranchiseRecord) => {
     const label = f.name?.trim() || f.email || "this franchise";
-    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    const ok1 = await askConfirm({
+      title: "Delete franchise",
+      message: `Delete ${label}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
+    if (!ok1) return;
     setDeletingFranchiseId(f.id);
     try {
       await api.delete(franchiseDeletePath(f.id, false));
@@ -604,18 +761,19 @@ export default function StaffPage() {
     } catch (e: unknown) {
       const msg =
         e instanceof Error ? e.message : "Could not delete franchise.";
-      if (
-        !confirm(
-          `${msg}\n\nForce delete? This may orphan associated clinics and staff.`,
-        )
-      ) {
-        return;
-      }
+      const ok2 = await askConfirm({
+        title: "Force delete?",
+        message: `${msg}\n\nForce delete? This may orphan associated clinics and staff.`,
+        confirmLabel: "Force delete",
+        cancelLabel: "Cancel",
+        variant: "danger",
+      });
+      if (!ok2) return;
       try {
         await api.delete(franchiseDeletePath(f.id, true));
         setFranchises((prev) => prev.filter((x) => x.id !== f.id));
       } catch (e2: unknown) {
-        alert(
+        toast.error(
           e2 instanceof Error ? e2.message : "Force delete failed.",
         );
       }
@@ -627,13 +785,14 @@ export default function StaffPage() {
   const handleDeleteStaffMember = useCallback(
     async (user: AdminUser) => {
       const sid = staffDetailPathId(user);
-      if (
-        !confirm(
-          `Delete ${user.name}? This removes the account and all associated activity logs.`,
-        )
-      ) {
-        return;
-      }
+      const ok = await askConfirm({
+        title: "Delete staff member",
+        message: `Delete ${user.name}? This removes the account and all associated activity logs.`,
+        confirmLabel: "Delete",
+        cancelLabel: "Cancel",
+        variant: "danger",
+      });
+      if (!ok) return;
       setDeletingStaffId(sid);
       try {
         await api.delete(`/api/v1/admin-staff-management/staff/${sid}`);
@@ -641,14 +800,14 @@ export default function StaffPage() {
           prev.filter((u) => staffDetailPathId(u) !== sid),
         );
       } catch (err: unknown) {
-        alert(
+        toast.error(
           err instanceof Error ? err.message : "Could not delete staff member.",
         );
       } finally {
         setDeletingStaffId(null);
       }
     },
-    [],
+    [toast, askConfirm],
   );
 
   useEffect(() => {
@@ -752,6 +911,11 @@ export default function StaffPage() {
       setFranchiseSelectedCityIds([]);
       return;
     }
+    if (franchiseForm.level === "district") {
+      setFranchiseCitiesList([]);
+      setFranchiseSelectedCityIds([]);
+      return;
+    }
 
     let cancelled = false;
     setFranchiseCitiesLoading(true);
@@ -776,12 +940,69 @@ export default function StaffPage() {
     return () => {
       cancelled = true;
     };
-  }, [showFranchiseForm, franchiseSelectedStateCodes]);
+  }, [showFranchiseForm, franchiseSelectedStateCodes, franchiseForm.level]);
+
+  useEffect(() => {
+    if (
+      !showFranchiseForm ||
+      franchiseForm.level !== "district" ||
+      franchiseSelectedStateCodes.length === 0
+    ) {
+      setFranchiseDistrictOptions([]);
+      setFranchiseSelectedDistrictKeys([]);
+      return;
+    }
+
+    let cancelled = false;
+    setFranchiseDistrictsLoading(true);
+    void (async () => {
+      const merged: FranchiseDistrictOption[] = [];
+      for (const code of franchiseSelectedStateCodes) {
+        const st = franchiseLocationStates.find((x) => x.code === code);
+        if (st?.id == null || !Number.isFinite(st.id)) continue;
+        try {
+          const rows = await fetchFranchiseDistrictsByStateId(st.id);
+          if (cancelled) return;
+          for (const d of rows) {
+            merged.push({
+              state_id: st.id,
+              state_code: code,
+              id: d.id,
+              name: d.name,
+            });
+          }
+        } catch {
+          /* skip state on failure */
+        }
+      }
+      if (cancelled) return;
+      merged.sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      );
+      setFranchiseDistrictOptions(merged);
+      setFranchiseSelectedDistrictKeys((prev) =>
+        prev.filter((key) =>
+          merged.some((o) => `${o.state_id}:${o.id}` === key),
+        ),
+      );
+    })().finally(() => {
+      if (!cancelled) setFranchiseDistrictsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showFranchiseForm,
+    franchiseForm.level,
+    franchiseSelectedStateCodes,
+    franchiseLocationStates,
+  ]);
 
   useEffect(() => {
     if (!showFranchiseForm) {
       setFranchiseStateDropdownOpen(false);
       setFranchiseCityDropdownOpen(false);
+      setFranchiseDistrictDropdownOpen(false);
     }
   }, [showFranchiseForm]);
 
@@ -821,6 +1042,24 @@ export default function StaffPage() {
     };
   }, [franchiseCityDropdownOpen]);
 
+  useEffect(() => {
+    if (!franchiseDistrictDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = franchiseDistrictDropdownRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setFranchiseDistrictDropdownOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFranchiseDistrictDropdownOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [franchiseDistrictDropdownOpen]);
+
   const handleRegisterUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -832,7 +1071,7 @@ export default function StaffPage() {
       }>("/api/v1/admin-staff-management/staff", payload);
 
       if (result && typeof result === "object" && result.success === false) {
-        alert(
+        toast.error(
           typeof result.message === "string"
             ? result.message
             : "Could not create admin staff.",
@@ -840,7 +1079,7 @@ export default function StaffPage() {
         return;
       }
 
-      alert(
+      toast.success(
         typeof result.message === "string" && result.message
           ? result.message
           : "Admin staff created successfully.",
@@ -851,7 +1090,7 @@ export default function StaffPage() {
       setCitiesList([]);
       void fetchUsers();
     } catch (err: unknown) {
-      alert(
+      toast.error(
         err instanceof Error ? err.message : "Request failed. Please try again.",
       );
     } finally {
@@ -862,128 +1101,82 @@ export default function StaffPage() {
   const handleCreateFranchise = async (e: React.FormEvent) => {
     e.preventDefault();
     if (franchiseSelectedStateCodes.length === 0) {
-      alert("Select at least one state.");
+      toast.error("Select at least one state.");
       return;
     }
 
-    const primaryCode = franchiseSelectedStateCodes[0];
-    const st = franchiseLocationStates.find((s) => s.code === primaryCode);
-    const fromApi = st?.id;
-    const manual = franchiseForm.state_id_manual.trim();
-    const resolvedStateId =
-      fromApi != null && Number.isFinite(fromApi)
-        ? fromApi
-        : manual !== ""
-          ? Number(manual)
-          : NaN;
+    const districtPicksForPayload: FranchiseDistrictPick[] | null =
+      franchiseForm.level === "district"
+        ? franchiseSelectedDistrictKeys
+            .map((key) => {
+              const parts = key.split(":");
+              if (parts.length !== 2) return null;
+              const state_id = Number(parts[0]);
+              const district_id = Number(parts[1]);
+              if (!Number.isFinite(state_id) || !Number.isFinite(district_id)) {
+                return null;
+              }
+              return { state_id, district_id };
+            })
+            .filter((x): x is FranchiseDistrictPick => x != null)
+        : null;
 
-    if (!Number.isFinite(resolvedStateId)) {
-      alert(
-        "The first state in the list (among your selections) needs a numeric ID. Enter it below if the API did not provide one.",
-      );
+    const territoryResult = buildFranchiseTerritories(
+      franchiseForm.level,
+      franchiseSelectedStateCodes,
+      franchiseLocationStates,
+      franchiseSelectedCityIds,
+      franchiseCitiesList,
+      districtPicksForPayload,
+    );
+    if (!territoryResult.ok) {
+      toast.error(territoryResult.message);
       return;
-    }
-
-    const primaryCityId =
-      franchiseSelectedCityIds.length > 0 ? franchiseSelectedCityIds[0] : null;
-
-    if (franchiseForm.level === "district") {
-      const d = Number(franchiseForm.district_id.replace(/\s/g, ""));
-      if (!Number.isFinite(d)) {
-        alert("District level requires a valid numeric district ID.");
-        return;
-      }
-      if (primaryCityId == null || !Number.isFinite(primaryCityId)) {
-        alert(
-          "District level requires at least one city (first selected is used as primary city).",
-        );
-        return;
-      }
-    }
-
-    if (franchiseForm.level === "city") {
-      if (primaryCityId == null || !Number.isFinite(primaryCityId)) {
-        alert(
-          "City level requires at least one state and at least one selected city.",
-        );
-        return;
-      }
     }
 
     setFranchiseSubmitting(true);
     try {
       const payload = buildCreateFranchisePayload(
         franchiseForm,
-        resolvedStateId,
-        primaryCityId,
+        territoryResult.territories,
       );
-      const created = await api.post<Record<string, unknown>>(
-        "/api/v1/super-admin/franchises/franchises",
-        payload,
-      );
-      const newFranchiseId = franchiseIdFromCreateResponse(created);
+      const result = await api.post<{
+        success?: boolean;
+        message?: string;
+      }>("/api/v1/super-admin/franchises/franchises", payload);
 
-      const bulkDistricts =
-        franchiseForm.level === "state"
-          ? parseCommaSeparatedPositiveInts(franchiseForm.bulk_district_ids)
-          : [];
-      const bulkCities =
-        franchiseForm.level === "district" || franchiseForm.level === "city"
-          ? [...franchiseSelectedCityIds]
-          : [];
-
-      let bulkMessage: string | null = null;
-      if (bulkDistricts.length > 0 || bulkCities.length > 0) {
-        if (newFranchiseId == null) {
-          bulkMessage =
-            "Franchise was created but the response had no franchise id, so bulk territories were not assigned.";
-        } else {
-          try {
-            await api.post(
-              `/api/v1/super-admin/territories/franchises/${newFranchiseId}/territories/bulk`,
-              { districts: bulkDistricts, cities: bulkCities },
-            );
-          } catch (bulkErr: unknown) {
-            bulkMessage =
-              bulkErr instanceof Error
-                ? `Franchise created, but bulk territories failed: ${bulkErr.message}`
-                : "Franchise created, but bulk territories failed.";
-          }
-        }
+      if (result && typeof result === "object" && result.success === false) {
+        toast.error(
+          typeof result.message === "string" && result.message.trim()
+            ? result.message
+            : "Franchise was not created.",
+        );
+        return;
       }
 
-      alert(
-        bulkMessage ??
-          "Franchise created successfully.",
+      toast.success(
+        typeof result?.message === "string" && result.message.trim()
+          ? result.message
+          : "Franchise created successfully.",
       );
       setShowFranchiseForm(false);
       setFranchiseForm(initialFranchiseForm());
       setFranchiseSelectedStateCodes([]);
       setFranchiseCitiesList([]);
       setFranchiseSelectedCityIds([]);
+      setFranchiseDistrictOptions([]);
+      setFranchiseSelectedDistrictKeys([]);
       void fetchUsers();
       void fetchFranchises();
       setHierarchyTab("franchises");
     } catch (err: unknown) {
-      alert(
+      toast.error(
         err instanceof Error ? err.message : "Could not create franchise.",
       );
     } finally {
       setFranchiseSubmitting(false);
     }
   };
-
-  const franchisePrimaryCode =
-    franchiseSelectedStateCodes.length > 0
-      ? franchiseSelectedStateCodes[0]
-      : "";
-  const franchisePrimarySelectedState = franchisePrimaryCode
-    ? franchiseLocationStates.find((s) => s.code === franchisePrimaryCode)
-    : undefined;
-  const franchiseStateNeedsManualId =
-    franchiseSelectedStateCodes.length > 0 &&
-    (franchisePrimarySelectedState == null ||
-      franchisePrimarySelectedState.id === undefined);
 
   return (
     <div className="page-container staff-page">
@@ -1027,6 +1220,8 @@ export default function StaffPage() {
               setFranchiseSelectedStateCodes([]);
               setFranchiseCitiesList([]);
               setFranchiseSelectedCityIds([]);
+              setFranchiseDistrictOptions([]);
+              setFranchiseSelectedDistrictKeys([]);
               setFranchiseLocationsError(null);
               setShowFranchiseForm(true);
             }}
@@ -1986,10 +2181,9 @@ export default function StaffPage() {
                         setFranchiseForm((prev) => ({
                           ...prev,
                           level,
-                          ...(level !== "district" ? { district_id: "" } : {}),
-                          ...(level !== "state" ? { bulk_district_ids: "" } : {}),
                         }));
-                        if (level === "state") setFranchiseSelectedCityIds([]);
+                        setFranchiseSelectedCityIds([]);
+                        setFranchiseSelectedDistrictKeys([]);
                       }}
                       required
                     >
@@ -2143,11 +2337,7 @@ export default function StaffPage() {
                                     allSelected ? [] : all,
                                   );
                                   setFranchiseSelectedCityIds([]);
-                                  setFranchiseForm((prev) => ({
-                                    ...prev,
-                                    state_id_manual: "",
-                                  }));
-                                  setFranchiseStateDropdownOpen(false);
+                                  setFranchiseSelectedDistrictKeys([]);
                                 }}
                               >
                                 {franchiseSelectedStateCodes.length > 0 &&
@@ -2157,17 +2347,7 @@ export default function StaffPage() {
                                   : "Select all"}
                               </button>
                             </div>
-                            <p
-                              style={{
-                                margin: "0 0 8px",
-                                fontSize: 11,
-                                color: "#64748b",
-                                lineHeight: 1.35,
-                              }}
-                            >
-                              First selected state in list order sets{" "}
-                              <code style={{ fontSize: 11 }}>state_id</code>.
-                            </p>
+                      
                             {franchiseLocationStates.map((s) => {
                               const checked =
                                 franchiseSelectedStateCodes.includes(s.code);
@@ -2206,11 +2386,7 @@ export default function StaffPage() {
                                         },
                                       );
                                       setFranchiseSelectedCityIds([]);
-                                      setFranchiseForm((p) => ({
-                                        ...p,
-                                        state_id_manual: "",
-                                      }));
-                                      setFranchiseStateDropdownOpen(false);
+                                      setFranchiseSelectedDistrictKeys([]);
                                     }}
                                   />
                                   <span>
@@ -2226,82 +2402,10 @@ export default function StaffPage() {
                   </div>
                 </div>
 
-                {franchiseStateNeedsManualId && (
-                  <div className="form-group">
-                    <label
-                      style={{
-                        display: "block",
-                        marginBottom: 8,
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: "#475569",
-                      }}
-                    >
-                      Numeric state ID
-                    </label>
-                    <input
-                      type="number"
-                      className="form-input"
-                      min={1}
-                      value={franchiseForm.state_id_manual}
-                      onChange={(e) =>
-                        setFranchiseForm((p) => ({
-                          ...p,
-                          state_id_manual: e.target.value,
-                        }))
-                      }
-                      placeholder="Required when state list has no IDs"
-                      required
-                    />
-                  </div>
-                )}
-
-                {franchiseForm.level === "state" && (
-                  <div className="form-group">
-                    <label
-                      htmlFor="franchise-bulk-districts"
-                      style={{
-                        display: "block",
-                        marginBottom: 8,
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: "#475569",
-                      }}
-                    >
-                      District IDs (bulk assign)
-                    </label>
-                    <textarea
-                      id="franchise-bulk-districts"
-                      className="form-input"
-                      rows={2}
-                      value={franchiseForm.bulk_district_ids}
-                      onChange={(e) =>
-                        setFranchiseForm((p) => ({
-                          ...p,
-                          bulk_district_ids: e.target.value,
-                        }))
-                      }
-                      placeholder="e.g. 12, 34, 56"
-                      style={{ resize: "vertical", minHeight: 56 }}
-                    />
-                    <p
-                      style={{
-                        margin: "6px 0 0",
-                        fontSize: 11,
-                        color: "#64748b",
-                        lineHeight: 1.35,
-                      }}
-                    >
-                      Comma-separated backend district IDs. Sent to bulk
-                      territories after the franchise is created. Leave empty to
-                      skip bulk assign.
-                    </p>
-                  </div>
-                )}
-
                 {franchiseForm.level === "district" && (
                   <div className="form-group">
                     <label
+                      id="franchise-district-label"
                       style={{
                         display: "block",
                         marginBottom: 8,
@@ -2310,27 +2414,222 @@ export default function StaffPage() {
                         color: "#475569",
                       }}
                     >
-                      District ID
+                      Districts
                     </label>
-                    <input
-                      type="number"
-                      className="form-input"
-                      min={1}
-                      value={franchiseForm.district_id}
-                      onChange={(e) =>
-                        setFranchiseForm((p) => ({
-                          ...p,
-                          district_id: e.target.value,
-                        }))
-                      }
-                      placeholder="Backend district identifier"
-                      required
-                    />
+                 
+                    {franchiseSelectedStateCodes.length === 0 ? (
+                      <select
+                        id="franchise-district"
+                        className="form-input staff-form-select"
+                        disabled
+                        value=""
+                      >
+                        <option value="">Select state(s) first</option>
+                      </select>
+                    ) : franchiseDistrictsLoading ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: 12,
+                          color: "#64748b",
+                        }}
+                      >
+                        <Loader2 className="animate-spin" size={18} />
+                        <span style={{ fontSize: 13 }}>Loading districts…</span>
+                      </div>
+                    ) : franchiseDistrictOptions.length === 0 ? (
+                      <select
+                        id="franchise-district"
+                        className="form-input staff-form-select"
+                        disabled
+                        value=""
+                      >
+                        <option value="">
+                          No districts for selected state(s) — check API or state
+                          IDs
+                        </option>
+                      </select>
+                    ) : (
+                      <div
+                        ref={franchiseDistrictDropdownRef}
+                        style={{ position: "relative", width: "100%" }}
+                      >
+                        <button
+                          type="button"
+                          id="franchise-district-trigger"
+                          className="form-input staff-form-select"
+                          aria-haspopup="listbox"
+                          aria-expanded={franchiseDistrictDropdownOpen}
+                          aria-labelledby="franchise-district-label franchise-district-trigger"
+                          onClick={() =>
+                            setFranchiseDistrictDropdownOpen((o) => !o)
+                          }
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            textAlign: "left",
+                            cursor: "pointer",
+                            background: "#fff",
+                          }}
+                        >
+                          <span
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              fontSize: 14,
+                              color:
+                                franchiseSelectedDistrictKeys.length === 0
+                                  ? "#94a3b8"
+                                  : "#334155",
+                            }}
+                          >
+                            {franchiseSelectedDistrictKeys.length === 0
+                              ? "Select district(s)"
+                              : franchiseSelectedDistrictKeys.length === 1
+                                ? (() => {
+                                    const k =
+                                      franchiseSelectedDistrictKeys[0];
+                                    const o = franchiseDistrictOptions.find(
+                                      (x) => `${x.state_id}:${x.id}` === k,
+                                    );
+                                    return o
+                                      ? `${o.name} (${o.state_code})`
+                                      : k;
+                                  })()
+                                : `${franchiseSelectedDistrictKeys.length} districts selected`}
+                          </span>
+                          <ChevronDown
+                            size={18}
+                            aria-hidden
+                            style={{
+                              flexShrink: 0,
+                              color: "#64748b",
+                              transform: franchiseDistrictDropdownOpen
+                                ? "rotate(180deg)"
+                                : undefined,
+                              transition: "transform 0.15s ease",
+                            }}
+                          />
+                        </button>
+                        {franchiseDistrictDropdownOpen && (
+                          <div
+                            role="listbox"
+                            aria-multiselectable
+                            style={{
+                              position: "absolute",
+                              left: 0,
+                              right: 0,
+                              top: "calc(100% + 4px)",
+                              zIndex: 50,
+                              border: "1px solid #cbd5e1",
+                              borderRadius: 8,
+                              padding: "8px 10px",
+                              maxHeight: 220,
+                              overflowY: "auto",
+                              background: "#fff",
+                              boxShadow:
+                                "0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.08)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "flex-end",
+                                marginBottom: 6,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{
+                                  fontSize: 12,
+                                  padding: "4px 10px",
+                                }}
+                                onClick={() => {
+                                  const allKeys = franchiseDistrictOptions.map(
+                                    (d) => `${d.state_id}:${d.id}`,
+                                  );
+                                  const allSelected =
+                                    franchiseSelectedDistrictKeys.length ===
+                                      allKeys.length && allKeys.length > 0;
+                                  setFranchiseSelectedDistrictKeys(
+                                    allSelected ? [] : allKeys,
+                                  );
+                                }}
+                              >
+                                {franchiseSelectedDistrictKeys.length > 0 &&
+                                franchiseSelectedDistrictKeys.length ===
+                                  franchiseDistrictOptions.length
+                                  ? "Clear all"
+                                  : "Select all"}
+                              </button>
+                            </div>
+
+                            {franchiseDistrictOptions.map((d) => {
+                              const rowKey = `${d.state_id}:${d.id}`;
+                              const checked =
+                                franchiseSelectedDistrictKeys.includes(rowKey);
+                              return (
+                                <label
+                                  key={rowKey}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "4px 2px",
+                                    cursor: "pointer",
+                                    fontSize: 13,
+                                    color: "#334155",
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setFranchiseSelectedDistrictKeys(
+                                        (prev) => {
+                                          const order =
+                                            franchiseDistrictOptions.map(
+                                              (x) => `${x.state_id}:${x.id}`,
+                                            );
+                                          const set = new Set(prev);
+                                          if (set.has(rowKey)) {
+                                            set.delete(rowKey);
+                                          } else {
+                                            set.add(rowKey);
+                                          }
+                                          return order.filter((k) =>
+                                            set.has(k),
+                                          );
+                                        },
+                                      );
+                                    }}
+                                  />
+                                  <span>
+                                    {d.name}{" "}
+                                    <span style={{ color: "#94a3b8" }}>
+                                      ({d.state_code})
+                                    </span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {(franchiseForm.level === "city" ||
-                  franchiseForm.level === "district") && (
+                {franchiseForm.level === "city" && (
                   <div className="form-group">
                     <label
                       id="franchise-city-label"
@@ -2342,9 +2641,7 @@ export default function StaffPage() {
                         color: "#475569",
                       }}
                     >
-                      {franchiseForm.level === "district"
-                        ? "Cities (bulk assign)"
-                        : "Cities"}
+                      Cities
                     </label>
                     {franchiseSelectedStateCodes.length === 0 ? (
                       <select
@@ -2488,7 +2785,6 @@ export default function StaffPage() {
                                   setFranchiseSelectedCityIds(
                                     allSelected ? [] : allIds,
                                   );
-                                  setFranchiseCityDropdownOpen(false);
                                 }}
                               >
                                 {franchiseSelectedCityIds.length > 0 &&
@@ -2498,18 +2794,7 @@ export default function StaffPage() {
                                   : "Select all"}
                               </button>
                             </div>
-                            <p
-                              style={{
-                                margin: "0 0 8px",
-                                fontSize: 11,
-                                color: "#64748b",
-                                lineHeight: 1.35,
-                              }}
-                            >
-                              First selected city is used as{" "}
-                              <code style={{ fontSize: 11 }}>city_id</code> on
-                              create; all selected are sent in bulk.
-                            </p>
+                          
                             {franchiseCitiesList.map((c) => {
                               const checked =
                                 franchiseSelectedCityIds.includes(c.id);
@@ -2544,7 +2829,6 @@ export default function StaffPage() {
                                           set.has(id),
                                         );
                                       });
-                                      setFranchiseCityDropdownOpen(false);
                                     }}
                                   />
                                   <span>{c.name}</span>

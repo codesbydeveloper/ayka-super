@@ -31,19 +31,12 @@ function str(v: unknown, fallback: string): string {
   return String(v);
 }
 
+/** Shared dashboard APIs for all central roles (super admin + admin staff). Backend scopes data by token. */
 function dashboardApiPath(): string {
-  if (typeof window === "undefined") return "/api/v1/super-admin/dashboard";
-  const t = localStorage.getItem("user_type") || "";
-  if (t === "admin_staff") return "/api/v1/admin-staff/dashboard";
   return "/api/v1/super-admin/dashboard";
 }
 
 function dashboardActivityApiPath(): string {
-  if (typeof window === "undefined")
-    return "/api/v1/super-admin/dashboard/activity";
-  const t = localStorage.getItem("user_type") || "";
-  if (t === "admin_staff")
-    return "/api/v1/admin-staff/dashboard/activity";
   return "/api/v1/super-admin/dashboard/activity";
 }
 

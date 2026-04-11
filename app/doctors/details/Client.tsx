@@ -7,6 +7,8 @@ import {
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
+import { useConfirm } from '@/components/ConfirmDialog';
 import '../../dashboard/Dashboard.css';
 import './DoctorDetail.css';
 
@@ -14,6 +16,8 @@ function DoctorDetailsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
+  const toast = useToast();
+  const askConfirm = useConfirm();
 
   const [doctor, setDoctor] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -96,7 +100,7 @@ function DoctorDetailsContent() {
       });
       setDoctor((prev: any) => ({ ...prev, is_active: !prev.is_active }));
     } catch (err: any) {
-      alert(err.message || 'An error occurred during update');
+      toast.error(err.message || "An error occurred during update");
     } finally {
       setUpdateLoading(false);
     }
@@ -104,16 +108,24 @@ function DoctorDetailsContent() {
 
   const handleDeleteProfile = async () => {
     if (!id) return;
-    const ok = window.confirm(
-      'Permanently delete this doctor and all related appointments and prescriptions? This cannot be undone.'
-    );
+    const display =
+      typeof doctor?.name === "string" && doctor.name.trim()
+        ? doctor.name.trim()
+        : "this doctor";
+    const ok = await askConfirm({
+      title: "Delete specialist",
+      message: `Permanently delete ${display} and all related appointments and prescriptions? This cannot be undone.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
     if (!ok) return;
     setDeleteLoading(true);
     try {
       await api.delete(`${doctorsBasePath()}/${id}`);
-      router.push('/doctors');
+      router.push("/doctors");
     } catch (err: any) {
-      alert(err.message || 'Failed to delete doctor');
+      toast.error(err.message || "Failed to delete doctor");
     } finally {
       setDeleteLoading(false);
     }

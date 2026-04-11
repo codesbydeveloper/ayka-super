@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import AppLayout from "@/components/AppLayout";
+import { ToastProvider } from "@/components/ToastProvider";
+import { ConfirmProvider } from "@/components/ConfirmDialog";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -35,7 +37,11 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className={`${inter.className} min-h-full flex flex-col`}>
-        <AppLayout>{children}</AppLayout>
+        <ToastProvider>
+          <ConfirmProvider>
+            <AppLayout>{children}</AppLayout>
+          </ConfirmProvider>
+        </ToastProvider>
       </body>
     </html>
   );

@@ -14,6 +14,8 @@ import {
   Edit2,
 } from "lucide-react";
 import { api } from "@/utils/api";
+import { useToast } from "@/components/ToastProvider";
+import { useConfirm } from "@/components/ConfirmDialog";
 import "../../dashboard/Dashboard.css";
 import "../Staff.css";
 
@@ -344,6 +346,8 @@ function StaffDetailsContent() {
   const id = searchParams.get("id");
   /** Only `mode=edit` allows changes; `mode=view` or missing mode is read-only. */
   const canEdit = searchParams.get("mode") === "edit";
+  const toast = useToast();
+  const askConfirm = useConfirm();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -457,17 +461,17 @@ function StaffDetailsContent() {
         payload,
       );
       if (result && typeof result === "object" && result.success === false) {
-        alert(
+        toast.error(
           typeof result.message === "string"
             ? result.message
             : "Update was not accepted.",
         );
         return;
       }
-      alert("Staff updated successfully.");
+      toast.success("Staff updated successfully.");
       router.push("/staff");
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Unable to save changes.");
+      toast.error(err instanceof Error ? err.message : "Unable to save changes.");
     } finally {
       setSaving(false);
     }
@@ -476,13 +480,14 @@ function StaffDetailsContent() {
   const handleDeleteStaff = async () => {
     if (!canEdit) return;
     if (!id) return;
-    if (
-      !confirm(
-        "Delete this staff member? Their account and activity logs will be removed.",
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: "Delete staff member?",
+      message:
+        "Their account and activity logs will be removed. This cannot be undone.",
+      variant: "danger",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     setDeleting(true);
     try {
       await api.delete(
@@ -490,7 +495,7 @@ function StaffDetailsContent() {
       );
       router.push("/staff");
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Delete failed.");
+      toast.error(err instanceof Error ? err.message : "Delete failed.");
     } finally {
       setDeleting(false);
     }

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Search, Bell, HelpCircle, ChevronDown, User, Menu } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import styles from './Header.module.css';
+import { useToast } from '@/components/ToastProvider';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -10,6 +11,7 @@ interface HeaderProps {
 
 export default function Header({ onMenuClick }: HeaderProps) {
   const router = useRouter();
+  const toast = useToast();
   const [userData, setUserData] = useState<any>(null);
 
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    alert("Global search is coming soon.");
+    toast.info("Global search is coming soon.");
   };
 
   return (
@@ -45,7 +47,14 @@ export default function Header({ onMenuClick }: HeaderProps) {
       </div>
 
       <div className={styles.rightSection}>
-        <button className={styles.iconButton} title="Help Center" onClick={() => alert("AYKA Central Support: contact@aykacare.com")}>
+        <button
+          className={styles.iconButton}
+          title="Help Center"
+          type="button"
+          onClick={() =>
+            toast.info("AYKA Central Support: contact@aykacare.com")
+          }
+        >
           <HelpCircle size={20} />
         </button>
         <button className={styles.iconButton} title="Notifications" onClick={() => router.push('/notifications')}>

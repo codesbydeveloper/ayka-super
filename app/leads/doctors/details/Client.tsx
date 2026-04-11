@@ -5,10 +5,12 @@ import {
   Stethoscope, ArrowLeft, Save, Loader2, Mail, Phone, MapPin, Briefcase, FileText, Calendar
 } from 'lucide-react';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
 import '../../Leads.css';
 
 function DoctorDetailsContent() {
   const router = useRouter();
+  const toast = useToast();
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
 
@@ -53,10 +55,10 @@ function DoctorDetailsContent() {
       if (result.success) {
         router.push('/leads/doctors');
       } else {
-        alert(result.message || 'Failed to save doctor lead');
+        toast.error(result.message || 'Failed to save doctor lead');
       }
     } catch (err: any) {
-      alert(err.message || 'Error saving lead');
+      toast.error(err.message || 'Error saving lead');
     } finally {
       setSaving(false);
     }

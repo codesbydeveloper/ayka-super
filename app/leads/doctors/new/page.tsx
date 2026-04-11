@@ -5,10 +5,12 @@ import {
   Stethoscope, ArrowLeft, Plus, Loader2, Mail, Phone, MapPin, Briefcase, FileText, Calendar
 } from 'lucide-react';
 import { api } from '@/utils/api';
+import { useToast } from '@/components/ToastProvider';
 import '../../Leads.css';
 
 export default function NewDoctorLeadPage() {
   const router = useRouter();
+  const toast = useToast();
 
   const [saving, setSaving] = useState(false);
   const [lead, setLead] = useState({
@@ -24,10 +26,10 @@ export default function NewDoctorLeadPage() {
       if (result.success) {
         router.push('/leads/doctors');
       } else {
-        alert(result.message || 'Failed to create lead');
+        toast.error(result.message || 'Failed to create lead');
       }
     } catch (err: any) {
-      alert(err.message || 'Error creating lead');
+      toast.error(err.message || 'Error creating lead');
     } finally {
       setSaving(false);
     }

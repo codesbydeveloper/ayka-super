@@ -22,6 +22,7 @@ import {
 } from "@/utils/leadLabels";
 import "../dashboard/Dashboard.css";
 import "./Settings.css";
+import { useToast } from "@/components/ToastProvider";
 
 type SettingsSection = "general" | "labels";
 
@@ -76,6 +77,7 @@ function createLabelButtonStyle(
 }
 
 export default function SettingsPage() {
+  const toast = useToast();
   const [section, setSection] = useState<SettingsSection>("general");
   const [labels, setLabels] = useState<LeadLabel[]>([]);
   const [labelsLoading, setLabelsLoading] = useState(false);
@@ -86,7 +88,7 @@ export default function SettingsPage() {
   const [creating, setCreating] = useState(false);
 
   const handleSaveChanges = () => {
-    alert("System settings updated successfully.");
+    toast.success("System settings updated successfully.");
   };
 
   const loadLabels = useCallback(async () => {
@@ -343,13 +345,7 @@ export default function SettingsPage() {
               <h3 className="card-title" style={{ marginBottom: "8px" }}>
                 Lead labels
               </h3>
-              <p
-                className="form-help"
-                style={{ marginBottom: "24px", fontSize: "13px" }}
-              >
-                Manage labels used for lead pipeline tagging. List is loaded from
-                the super-admin API; create new labels below.
-              </p>
+              
 
               {labelsError && (
                 <div className="settings-labels-error" role="alert">

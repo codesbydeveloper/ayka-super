@@ -18,6 +18,8 @@ import {
 import "../dashboard/Dashboard.css";
 import "./Subscriptions.css";
 import { api } from "@/utils/api";
+import { useToast } from "@/components/ToastProvider";
+import { useConfirm } from "@/components/ConfirmDialog";
 import {
   type AddonDisplay,
   parseAddonServicesPayload,
@@ -109,6 +111,8 @@ function mapApiPlanToDisplay(p: ApiSubscriptionPlan): SubscriptionDisplayPlan {
 
 export default function SubscriptionsPage() {
   const router = useRouter();
+  const toast = useToast();
+  const askConfirm = useConfirm();
 
   const [plans, setPlans] = useState<SubscriptionDisplayPlan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,19 +192,28 @@ export default function SubscriptionsPage() {
     );
 
   const handleDeleteAddon = async (addonId: number) => {
-    if (!confirm("Delete this add-on service? This cannot be undone.")) return;
+    const ok = await askConfirm({
+      title: "Delete add-on?",
+      message:
+        "This permanently removes this add-on service from the catalog. This cannot be undone.",
+      variant: "danger",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     setDeletingAddonId(addonId);
     try {
       const result = await api.delete<{ success?: boolean; message?: string }>(
         `/api/v1/super-admin/addon-services/${addonId}`,
       );
       if (result.success === false) {
-        alert(result.message || "Could not delete this add-on.");
+        toast.error(result.message || "Could not delete this add-on.");
         return;
       }
       await fetchAddons();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Could not delete this add-on.");
+      toast.error(
+        err instanceof Error ? err.message : "Could not delete this add-on.",
+      );
     } finally {
       setDeletingAddonId(null);
     }
@@ -220,7 +233,9 @@ export default function SubscriptionsPage() {
             type="button"
             className="subscriptions-btn subscriptions-btn--outline"
             onClick={() =>
-              alert("Category management will be available in a future release.")
+              toast.info(
+                "Category management will be available in a future release.",
+              )
             }
           >
             <PlusSquare size={18} strokeWidth={2} />
